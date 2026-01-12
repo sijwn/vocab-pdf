@@ -4,537 +4,574 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>영단어 문제지/답안지 PDF 생성기</title>
+
+  <!-- SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- jsPDF -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Apple SD Gothic Neo, "Noto Sans KR", sans-serif; margin: 18px; }
-    .card { max-width: 860px; margin: 0 auto; padding: 16px; border: 1px solid #ddd; border-radius: 12px; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+    :root { --bd:#e5e7eb; --tx:#111827; --mut:#6b7280; --bg:#ffffff; }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; margin: 18px; color:var(--tx); background:var(--bg); }
+    .card { max-width: 980px; margin: 0 auto; padding: 16px; border:1px solid var(--bd); border-radius: 12px; }
+    h1 { font-size: 18px; margin: 0 0 10px; }
+    .muted { color: var(--mut); font-size: 13px; line-height: 1.5; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin: 10px 0; }
+    .row > * { flex: 0 0 auto; }
     label { font-size: 14px; }
-    input[type="number"] { width: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 10px; }
-    button { padding: 10px 14px; border: 0; border-radius: 10px; cursor: pointer; }
-    button.primary { background: #111; color: #fff; }
-    button.secondary { background: #eee; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .muted { color: #666; font-size: 13px; }
-    .log { white-space: pre-wrap; background: #fafafa; border: 1px solid #eee; border-radius: 12px; padding: 12px; font-size: 13px; }
-    .bad { color: #b00020; }
-    .good { color: #0a7a3a; }
-    .pill { display:inline-block; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; font-size: 12px; color:#444; background:#fff; }
+    input[type="number"] { width: 110px; padding: 9px 10px; border: 1px solid #cfd4dc; border-radius: 10px; }
+    input[type="file"] { padding: 8px; border: 1px dashed #cfd4dc; border-radius: 10px; }
+    button { padding: 10px 12px; border-radius: 10px; border:1px solid #cfd4dc; background:#fff; cursor:pointer; }
+    button.primary { background:#111827; color:#fff; border-color:#111827; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .pill { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--bd); border-radius: 999px; font-size: 12px; color:var(--mut); }
+    .ok { color:#065f46; }
+    .warn { color:#92400e; }
+    .err { color:#991b1b; }
+    .hr { height:1px; background:var(--bd); margin: 14px 0; }
+    .small { font-size: 12px; color:var(--mut); }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width:720px){ .grid2{ grid-template-columns: 1fr; } }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+           font-size: 12px; background:#0b1020; color:#e5e7eb; padding:10px; border-radius:10px; white-space:pre-wrap; }
   </style>
 </head>
+
 <body>
   <div class="card">
-    <h2 style="margin:0 0 8px;">영단어 문제지/답안지 PDF 생성기 (GitHub Pages)</h2>
-
-    <div class="row" style="margin-top:14px;">
-      <button class="secondary" id="pickBtn">엑셀 파일 불러오기</button>
-      <button class="secondary" id="prevBtn" disabled>이전 파일 불러오기</button>
-      <span class="pill" id="fileLabel">파일: (선택 안 됨)</span>
+    <h1>영단어 문제지/답안지 PDF 생성기</h1>
+    <div class="muted">
+      엑셀(<b>Sheet1</b>)을 읽어 Day 범위와 문항 수에 맞춰 <b>문제지 PDF</b>와 <b>답안지 PDF</b>를 각각 생성합니다.<br/>
+      - 크롬(PC/안드로이드/맥)에서는 이전 파일 자동 불러오기를 지원합니다(권한 허용 시).<br/>
+      - 사파리(iPhone 포함)는 보안 정책상 파일을 매번 선택해야 합니다.
     </div>
 
-    <!-- iOS/사파리 폴백 -->
-    <input id="fileInput" type="file" accept=".xlsx,.xls" style="display:none" />
+    <div class="hr"></div>
+
+    <div class="grid2">
+      <div>
+        <div class="row">
+          <button id="btnPick" class="primary">엑셀 선택(권장)</button>
+          <span id="pillFs" class="pill">FS API: 확인중…</span>
+        </div>
+        <div class="row">
+          <input id="fileInput" type="file" accept=".xlsx,.xls" />
+          <span class="small">사파리/폴백용</span>
+        </div>
+        <div class="row">
+          <button id="btnReopen">이전 파일 다시 열기</button>
+          <span id="pillHandle" class="pill">이전 파일: 없음</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="row">
+          <label>Day 시작</label><input id="dayFrom" type="number" min="1" value="1" />
+          <label>Day 끝</label><input id="dayTo" type="number" min="1" value="2" />
+        </div>
+        <div class="row">
+          <label>Day당 문항 수</label><input id="perDay" type="number" min="1" value="30" />
+          <span class="small">(예: Day마다 30개씩)</span>
+        </div>
+        <div class="row">
+          <button id="btnGenerate" class="primary" disabled>PDF 생성</button>
+          <span id="pillData" class="pill">데이터: 없음</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="hr"></div>
 
     <div class="row">
-      <label>Day 범위:</label>
-      <input id="dayStart" type="number" min="0" value="1" />
-      <span>~</span>
-      <input id="dayEnd" type="number" min="0" value="2" />
-      <label style="margin-left:10px;">출제 개수:</label>
-      <input id="count" type="number" min="1" value="30" />
+      <span class="pill">폰트: <span id="pillFont">불러오는 중…</span></span>
+      <span class="pill">시트: <span id="pillSheet">Sheet1</span></span>
     </div>
 
-    <div class="row">
-      <button class="primary" id="genBtn" disabled>PDF 생성</button>
-      <button class="secondary" id="downloadQ" disabled>문제지.pdf 다운로드</button>
-      <button class="secondary" id="downloadA" disabled>답안지.pdf 다운로드</button>
-    </div>
-
-    <div id="status" class="log" style="margin-top:12px;">대기 중…</div>
-
-    <div class="muted" style="margin-top:10px;">
-      시트 이름은 <b>Sheet1</b>을 우선 사용하고, 없으면 첫 번째 시트를 사용합니다. (A=day, B=단어, C=뜻)
-    </div>
+    <div id="log" class="log" style="margin-top:10px;">준비됨.</div>
   </div>
 
-  <script src="./xlsx.full.min.js"></script>
-  <script src="./jspdf.umd.min.js"></script>
+<script>
+(() => {
+  const { jsPDF } = window.jspdf;
 
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const statusEl = $("status");
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const logEl = $("log");
+  const btnPick = $("btnPick");
+  const btnReopen = $("btnReopen");
+  const btnGenerate = $("btnGenerate");
+  const fileInput = $("fileInput");
 
-    // ===== 한글 폰트 (doc마다 등록해야 함!) =====
-    const KOREAN_FONT_FILE = "./NotoSansKR-VariableFont_wght.ttf";
-    const KOREAN_FONT_VFS_NAME = "NotoSansKR.ttf";
-    const KOREAN_FONT_FAMILY = "NotoSansKR";
+  const pillFs = $("pillFs");
+  const pillHandle = $("pillHandle");
+  const pillData = $("pillData");
+  const pillFont = $("pillFont");
+  const pillSheet = $("pillSheet");
 
-    let KOREAN_FONT_B64 = null; // base64는 캐싱
-    async function fetchFontB64Once() {
-      if (KOREAN_FONT_B64) return KOREAN_FONT_B64;
+  const dayFromEl = $("dayFrom");
+  const dayToEl = $("dayTo");
+  const perDayEl = $("perDay");
 
-      const res = await fetch(KOREAN_FONT_FILE);
-      if (!res.ok) throw new Error("한글 폰트 파일을 불러오지 못했습니다: " + KOREAN_FONT_FILE);
+  function log(msg) {
+    logEl.textContent = msg;
+  }
 
-      const buf = await res.arrayBuffer();
+  // ---------- Feature detect ----------
+  const supportsFS = !!window.showOpenFilePicker && !!window.showSaveFilePicker;
+  pillFs.textContent = "FS API: " + (supportsFS ? "지원됨(크롬/엣지)" : "미지원(사파리 등)");
+  pillFs.classList.toggle("ok", supportsFS);
+  pillFs.classList.toggle("warn", !supportsFS);
 
-      // 안전한 base64 변환(큰 파일 대응)
-      const bytes = new Uint8Array(buf);
-      let binary = "";
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-      }
-      KOREAN_FONT_B64 = btoa(binary);
-      return KOREAN_FONT_B64;
-    }
-
-    async function ensureKoreanFont(doc) {
-      const b64 = await fetchFontB64Once();
-
-      // 중요: doc마다 폰트 등록(답안지 깨짐 방지)
-      try {
-        doc.addFileToVFS(KOREAN_FONT_VFS_NAME, b64);
-      } catch (_) {}
-      try {
-        doc.addFont(KOREAN_FONT_VFS_NAME, KOREAN_FONT_FAMILY, "normal");
-      } catch (_) {}
-
-      doc.setFont(KOREAN_FONT_FAMILY, "normal");
-    }
-
-    // ===== 상태/유틸 =====
-    let pdfBlobQ = null;
-    let pdfBlobA = null;
-
-    // FS Access 지원 브라우저용
-    let currentHandle = null;
-    // iOS/사파리용
-    let currentFile = null;
-
-    function log(msg, cls="") {
-      statusEl.textContent = msg;
-      statusEl.className = "log " + cls;
-    }
-    function assert(cond, msg) { if (!cond) throw new Error(msg); }
-    function toInt(x) {
-      const n = Number(x);
-      if (!Number.isFinite(n)) return null;
-      return Math.trunc(n);
-    }
-    function supportsFSAccess() {
-      return !!window.showOpenFilePicker;
-    }
-
-    // ===== IndexedDB (FS Access용 “이전 파일”) =====
-    const IDB_DB = "voca_pdf_app";
-    const IDB_STORE = "kv";
-    const KEY_HANDLE = "last_excel_handle";
-    const KEY_LAST_NAME = "last_excel_name";
-
-    function idbOpen() {
-      return new Promise((resolve, reject) => {
-        const req = indexedDB.open(IDB_DB, 1);
-        req.onupgradeneeded = () => {
-          const db = req.result;
-          if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
-    async function idbSet(key, value) {
-      const db = await idbOpen();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).put(value, key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-    }
-    async function idbGet(key) {
-      const db = await idbOpen();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(IDB_STORE, "readonly");
-        const req = tx.objectStore(IDB_STORE).get(key);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
-    async function saveLastHandle(handle) {
-      await idbSet(KEY_HANDLE, handle);
-      await idbSet(KEY_LAST_NAME, handle?.name || "");
-    }
-    async function loadLastHandle() { return await idbGet(KEY_HANDLE); }
-    async function loadLastName() { return (await idbGet(KEY_LAST_NAME)) || ""; }
-
-    // ===== 파일 선택(자동 폴백) =====
-    async function pickExcelAuto() {
-      pdfBlobQ = pdfBlobA = null;
-      $("downloadQ").disabled = true;
-      $("downloadA").disabled = true;
-
-      if (supportsFSAccess()) {
-        const [handle] = await window.showOpenFilePicker({
-          multiple: false,
-          types: [{
-            description: "Excel 파일",
-            accept: {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-              "application/vnd.ms-excel": [".xls"],
-            }
-          }],
-        });
-        assert(handle, "파일을 선택하지 않았습니다.");
-        currentHandle = handle;
-        currentFile = null;
-        await saveLastHandle(handle);
-
-        $("prevBtn").disabled = false;
-        $("genBtn").disabled = false;
-        $("fileLabel").textContent = `파일: ${handle.name}`;
-        log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
-      } else {
-        $("fileInput").value = "";
-        $("fileInput").click();
-      }
-    }
-
-    async function usePreviousFile() {
-      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’를 지원하지 않습니다. (iPhone/iPad는 파일을 다시 선택해야 할 수 있어요)");
-      const handle = await loadLastHandle();
-      assert(handle, "저장된 이전 파일이 없습니다. 먼저 ‘엑셀 파일 불러오기’로 파일을 선택해 주세요.");
-
-      let perm = await handle.queryPermission({ mode: "read" });
-      if (perm !== "granted") perm = await handle.requestPermission({ mode: "read" });
-      assert(perm === "granted", "파일 접근 권한이 필요합니다. 권한을 허용해 주세요.");
-
-      currentHandle = handle;
-      currentFile = null;
-
-      $("genBtn").disabled = false;
-      $("fileLabel").textContent = `파일: ${handle.name}`;
-      log("이전 파일 불러오기 완료. ‘PDF 생성’을 눌러주세요.", "good");
-    }
-
-    $("fileInput").addEventListener("change", () => {
-      const f = $("fileInput").files?.[0];
-      if (!f) return;
-      currentFile = f;
-      currentHandle = null;
-
-      $("prevBtn").disabled = true;
-      $("genBtn").disabled = false;
-      $("fileLabel").textContent = `파일: ${f.name}`;
-      log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
+  // ---------- IndexedDB (store file handle) ----------
+  const DB_NAME = "voca_pdf_db";
+  const STORE = "handles";
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
     });
+  }
+  async function idbSet(key, value) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function idbGet(key) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
 
-    // ===== 엑셀 읽기 =====
-    async function readExcelFromSource() {
-      let buf;
-      let shownName = "";
-      if (currentHandle) {
-        const file = await currentHandle.getFile();
-        buf = await file.arrayBuffer();
-        shownName = currentHandle.name;
-      } else if (currentFile) {
-        buf = await currentFile.arrayBuffer();
-        shownName = currentFile.name;
-      } else {
-        throw new Error("먼저 엑셀 파일을 선택해 주세요.");
+  // ---------- Font (NotoSansKR) ----------
+  // NOTE: This fetches TTF and embeds into jsPDF at runtime.
+  // If fetch fails (network/CORS), we fallback to built-in font (Korean may break).
+  const FONT_NAME = "NotoSansKR";
+  const FONT_STYLE = "normal";
+  const FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Korean/NotoSansKR-Regular.otf";
+
+  let fontReady = false;
+
+  async function fetchAsBase64(url) {
+    const res = await fetch(url, { cache: "force-cache" });
+    if (!res.ok) throw new Error("폰트 다운로드 실패: " + res.status);
+    const buf = await res.arrayBuffer();
+    // Convert ArrayBuffer -> base64
+    let binary = "";
+    const bytes = new Uint8Array(buf);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  async function ensureFont(doc) {
+    if (fontReady) return;
+    try {
+      pillFont.textContent = "다운로드 중…";
+      const b64 = await fetchAsBase64(FONT_URL);
+      doc.addFileToVFS("NotoSansKR-Regular.otf", b64);
+      doc.addFont("NotoSansKR-Regular.otf", FONT_NAME, FONT_STYLE);
+      fontReady = true;
+      pillFont.textContent = "NotoSansKR 로드됨";
+      pillFont.classList.remove("err");
+      pillFont.classList.add("ok");
+    } catch (e) {
+      console.warn(e);
+      pillFont.textContent = "폰트 로드 실패(기본폰트 사용)";
+      pillFont.classList.remove("ok");
+      pillFont.classList.add("err");
+      fontReady = false;
+    }
+  }
+
+  // ---------- Workbook state ----------
+  let workbook = null;
+  let parsedRows = []; // {day:number, word:string, meaning:string}
+  let sourceName = "";
+
+  function setDataPill(ok, text) {
+    pillData.textContent = "데이터: " + text;
+    pillData.classList.toggle("ok", ok);
+    pillData.classList.toggle("warn", !ok);
+  }
+
+  function setHandlePill(ok, text) {
+    pillHandle.textContent = "이전 파일: " + text;
+    pillHandle.classList.toggle("ok", ok);
+    pillHandle.classList.toggle("warn", !ok);
+  }
+
+  // ---------- Parsing helpers ----------
+  function norm(v) { return String(v ?? "").replace(/\s+/g, " ").trim(); }
+  function isIntStr(s) { return /^\d+$/.test(norm(s)); }
+  function looksEnglish(s) { s = norm(s); return /[A-Za-z]/.test(s) && !/[가-힣]/.test(s); }
+  function looksKorean(s) { s = norm(s); return /[가-힣]/.test(s); }
+
+  // (A) No-header table like your screenshot:
+  // col0: day number repeated, col1: word (english), col2: meaning (korean)
+  function parseNoHeaderDayTable(ws) {
+    const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" })
+      .map(row => row.map(v => norm(v)));
+
+    const colCount = Math.max(0, ...grid.map(r => r.length));
+
+    // find day column: highest int ratio
+    const colScore = Array(colCount).fill(0);
+    for (let c = 0; c < colCount; c++) {
+      let ints = 0, nonEmpty = 0;
+      for (let r = 0; r < grid.length; r++) {
+        const v = grid[r][c] || "";
+        if (!v) continue;
+        nonEmpty++;
+        if (isIntStr(v)) ints++;
       }
+      colScore[c] = nonEmpty ? ints / nonEmpty : 0;
+    }
+    const dayCol = colScore.indexOf(Math.max(...colScore));
+    if (dayCol < 0 || colScore[dayCol] < 0.6) return []; // not confident
 
-      const wb = XLSX.read(buf, { type: "array" });
-      const sheetName = wb.SheetNames.includes("Sheet1") ? "Sheet1" : wb.SheetNames[0];
-      const ws = wb.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
-
-      const rows = [];
-      for (const r of data) {
-        if (!r || r.length < 2) continue;
-        const day = toInt(r[0]);
-        const word = (r[1] ?? "").toString().trim();
-        const mean = (r[2] ?? "").toString().trim();
-        if (day === null) continue;
-        if (!word) continue;
-        rows.push({ day, word, mean });
+    // find word/meaning columns to the right
+    let wordCol = -1, meaningCol = -1;
+    for (let c = 0; c < colCount; c++) {
+      if (c === dayCol) continue;
+      let eng=0, kor=0, nonEmpty=0;
+      for (let r = 0; r < grid.length; r++) {
+        const v = grid[r][c] || "";
+        if (!v) continue;
+        nonEmpty++;
+        if (looksEnglish(v)) eng++;
+        if (looksKorean(v)) kor++;
       }
+      const engRatio = nonEmpty ? eng/nonEmpty : 0;
+      const korRatio = nonEmpty ? kor/nonEmpty : 0;
+      if (wordCol === -1 && engRatio > 0.5) wordCol = c;
+      if (meaningCol === -1 && korRatio > 0.5) meaningCol = c;
+    }
+    if (wordCol === -1 || meaningCol === -1) return [];
 
-      return { shownName, sheetName, rows };
+    const out = [];
+    for (const row of grid) {
+      const day = row[dayCol] || "";
+      const word = row[wordCol] || "";
+      const meaning = row[meaningCol] || "";
+      if (!isIntStr(day)) continue;
+      if (!word || !meaning) continue;
+      out.push({ day: Number(day), word, meaning });
+    }
+    return out;
+  }
+
+  // (B) If someday you also want to support "Day 1~2" style sheets, you can expand here.
+  // For now we prioritize the "no-header day numeric column" format you described.
+  function parseSheet1(ws) {
+    const out = parseNoHeaderDayTable(ws);
+    return out;
+  }
+
+  // ---------- Loading file ----------
+  async function readFileToWorkbook(file) {
+    const ab = await file.arrayBuffer();
+    return XLSX.read(ab, { type: "array" });
+  }
+
+  async function loadWorkbook(wb, displayName) {
+    workbook = wb;
+    sourceName = displayName || "선택한 파일";
+    const ws = wb.Sheets["Sheet1"];
+    pillSheet.textContent = "Sheet1";
+    if (!ws) {
+      parsedRows = [];
+      setDataPill(false, "Sheet1 없음");
+      btnGenerate.disabled = true;
+      log("에러: Sheet1 시트를 찾지 못했습니다.\n- 시트 이름을 Sheet1로 맞춰주세요.");
+      return;
+    }
+    parsedRows = parseSheet1(ws);
+
+    if (!parsedRows.length) {
+      setDataPill(false, "파싱 실패");
+      btnGenerate.disabled = true;
+      log("파싱 실패: Sheet1에서 (Day 숫자 열 + 영단어 열 + 한글 뜻 열) 패턴을 찾지 못했습니다.\n- Day 숫자만 있는 열이 있고, 옆 열에 영단어/뜻이 들어있는지 확인해주세요.");
+      return;
     }
 
-    // ===== 문제 선택 로직 =====
-    function shuffleInPlace(arr) {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = (Math.random() * (i + 1)) | 0;
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
+    const days = [...new Set(parsedRows.map(r => r.day))].sort((a,b)=>a-b);
+    setDataPill(true, `${sourceName} (${parsedRows.length}개, Day ${days[0]}~${days[days.length-1]})`);
+    btnGenerate.disabled = false;
+    log(`로드 완료: ${sourceName}\n- 총 ${parsedRows.length}개\n- Day 범위: ${days[0]} ~ ${days[days.length-1]}\n\n이제 Day 범위/문항 수를 입력하고 PDF 생성하면 됩니다.`);
+  }
+
+  // ---------- File picker (FS API) ----------
+  async function pickWithFS() {
+    if (!supportsFS) {
+      log("이 브라우저는 파일 자동 재열기(FS API)를 지원하지 않습니다.\n오른쪽의 파일 선택(input)을 사용하세요.");
+      return;
     }
-
-    function pickQuestions(rows, dayStart, dayEnd, nQuestions) {
-      const days = [];
-      for (let d = dayStart; d <= dayEnd; d++) days.push(d);
-
-      const byDay = new Map();
-      for (const d of days) byDay.set(d, []);
-      for (const r of rows) {
-        if (r.day >= dayStart && r.day <= dayEnd) byDay.get(r.day).push({ ...r });
-      }
-
-      const base = Math.floor(nQuestions / days.length);
-      const rem  = nQuestions % days.length;
-
-      const remaining = new Map();
-      for (const d of days) remaining.set(d, byDay.get(d).slice());
-
-      const chosen = [];
-      let deficit = 0;
-
-      for (let i=0;i<days.length;i++){
-        const d = days[i];
-        const need = base + (i < rem ? 1 : 0);
-        const pool = remaining.get(d);
-
-        if (need <= pool.length) {
-          shuffleInPlace(pool);
-          chosen.push(...pool.splice(0, need));
-        } else {
-          chosen.push(...pool.splice(0, pool.length));
-          deficit += (need - pool.length);
-        }
-      }
-
-      if (deficit > 0) {
-        const rest = [];
-        for (const d of days) rest.push(...remaining.get(d));
-        assert(deficit <= rest.length, `문제 수가 데이터보다 많습니다. 가능한 최대: ${chosen.length + rest.length}`);
-        shuffleInPlace(rest);
-        chosen.push(...rest.slice(0, deficit));
-      }
-
-      shuffleInPlace(chosen);
-      const finalChosen = chosen.slice(0, nQuestions);
-
-      return finalChosen.map((x, idx) => ({
-        no: idx+1, word: x.word, mean: x.mean, day: x.day
-      }));
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: "Excel", accept: {
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+          "application/vnd.ms-excel": [".xls"]
+        }}]
+      });
+      if (!handle) return;
+      const file = await handle.getFile();
+      await idbSet("last_handle", handle);
+      setHandlePill(true, file.name);
+      const wb = await readFileToWorkbook(file);
+      await loadWorkbook(wb, file.name);
+    } catch (e) {
+      log("파일 선택이 취소되었거나 오류가 발생했습니다.\n" + (e?.message || e));
     }
+  }
 
-    // ===== PDF 생성 (A4 세로, 페이지당 64문항, 세로만 중앙정렬) =====
-    async function buildPdf(titleText, questions, includeMeaning) {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-    
-      await ensureKoreanFont(doc);
-    
-      const pageW = 210, pageH = 297;
-    
-      // 가로 위치는 이전처럼(왼쪽 여백 기준)
-      const tableX = 10;
-    
-      // 열 너비
-      const wNo = 8, wWord = 34, wMean = 45, wGap = 6;
-      const colW = [wNo, wWord, wMean, wGap, wNo, wWord, wMean];
-    
-      // ✅ 실제 열 너비 합계만큼만 테이블 폭을 잡아야 오른쪽 빈 박스가 안 생김
-      const tableW = colW.reduce((a, b) => a + b, 0); // = 180
-    
-      const hInfo = 8, hHead = 8, hRow = 6;
-    
-      // 선 굵기(원래 얇게)
-      const outerLW = 0.35;
-      const innerLW = 0.25;
-    
-      const maxPerPage = 64;
-      const pageCount = Math.max(1, Math.ceil(questions.length / maxPerPage));
-    
-      for (let p = 0; p < pageCount; p++) {
-        if (p > 0) doc.addPage();
-    
-        const chunk = questions.slice(p * maxPerPage, (p + 1) * maxPerPage);
-        const rowsPerCol = Math.ceil(chunk.length / 2);
-        const left = chunk.slice(0, rowsPerCol);
-        const right = chunk.slice(rowsPerCol);
-    
-        // Day (작게, 위쪽 왼쪽, 박스 없음)
-        doc.setFont(KOREAN_FONT_FAMILY, "normal");
-        doc.setFontSize(10);
-        doc.text(titleText, tableX, 10);
-    
-        // 표 높이
-        const tableH = hInfo + hHead + (rowsPerCol * hRow);
-    
-        const topMargin = 18;   // Day 텍스트 아래부터 표 시작(원하면 16~25로 조절)
-        let tableY = topMargin;
-        let y = tableY;
-    
-        doc.setDrawColor(0);
-    
-        // 이름/점수
-        const leftBoxW = colW[0] + colW[1] + colW[2];
-        const rightBoxW = colW[4] + colW[5] + colW[6];
-    
-        doc.setLineWidth(outerLW);
-        doc.rect(tableX, y, leftBoxW, hInfo);
-        doc.rect(tableX + leftBoxW, y, colW[3], hInfo);
-        doc.rect(tableX + leftBoxW + colW[3], y, rightBoxW, hInfo);
-    
-        doc.setFontSize(10);
-        doc.text("이름", tableX + leftBoxW / 2, y + 5.5, { align: "center" });
-        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW / 2, y + 5.5, { align: "center" });
-    
-        y += hInfo;
-    
-        // 헤더
-        const headerLabels = ["번호", "단어", "의미", "", "번호", "단어", "의미"];
-        doc.setLineWidth(innerLW);
-    
-        let x = tableX;
-        for (let c = 0; c < 7; c++) {
-          doc.rect(x, y, colW[c], hHead);
-          if (headerLabels[c]) doc.text(headerLabels[c], x + colW[c] / 2, y + 5.5, { align: "center" });
-          x += colW[c];
-        }
-        y += hHead;
-    
-        // 본문
-        doc.setFontSize(9);
-    
-        for (let i = 0; i < rowsPerCol; i++) {
-          const L = left[i];
-          const R = right[i];
-    
-          // Left
-          let x0 = tableX;
-          doc.rect(x0, y, colW[0], hRow);
-          doc.rect(x0 + colW[0], y, colW[1], hRow);
-          doc.rect(x0 + colW[0] + colW[1], y, colW[2], hRow);
-    
-          if (L) {
-            doc.text(String(L.no), x0 + colW[0] / 2, y + 4.3, { align: "center" });
-            doc.text(L.word, x0 + colW[0] + 2, y + 4.3);
-            if (includeMeaning) doc.text(L.mean || "", x0 + colW[0] + colW[1] + 2, y + 4.3);
-          }
-    
-          // Gap
-          doc.rect(x0 + colW[0] + colW[1] + colW[2], y, colW[3], hRow);
-    
-          // Right
-          const xr = x0 + colW[0] + colW[1] + colW[2] + colW[3];
-          doc.rect(xr, y, colW[4], hRow);
-          doc.rect(xr + colW[4], y, colW[5], hRow);
-          doc.rect(xr + colW[4] + colW[5], y, colW[6], hRow);
-    
-          if (R) {
-            doc.text(String(R.no), xr + colW[4] / 2, y + 4.3, { align: "center" });
-            doc.text(R.word, xr + colW[4] + 2, y + 4.3);
-            if (includeMeaning) doc.text(R.mean || "", xr + colW[4] + colW[5] + 2, y + 4.3);
-          }
-    
-          y += hRow;
-        }
-    
-        // 바깥 테두리(테이블 폭은 이제 정확히 열 합계라 오른쪽 빈 박스 없음)
-        doc.setLineWidth(outerLW);
-        doc.rect(tableX, tableY, tableW, tableH);
-      }
-    
-      return doc.output("blob");
+  async function reopenLast() {
+    if (!supportsFS) {
+      log("이 브라우저는 이전 파일 자동 불러오기를 지원하지 않습니다(사파리 등).\n파일 선택(input)을 사용하세요.");
+      return;
     }
-
-    function downloadBlob(blob, filename) {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
-    async function ensurePrevButtonState() {
-      if (!supportsFSAccess()) {
-        $("prevBtn").disabled = true;
+    try {
+      const handle = await idbGet("last_handle");
+      if (!handle) {
+        setHandlePill(false, "없음");
+        log("저장된 이전 파일이 없습니다.\n먼저 '엑셀 선택(권장)'으로 파일을 한 번 선택해주세요.");
         return;
       }
-      try {
-        const h = await loadLastHandle();
-        $("prevBtn").disabled = !h;
-        const lastName = await loadLastName();
-        if (lastName && $("fileLabel").textContent.includes("(선택 안 됨)")) {
-          $("fileLabel").textContent = `파일: (이전: ${lastName})`;
+      const perm = await handle.queryPermission({ mode: "read" });
+      if (perm !== "granted") {
+        const req = await handle.requestPermission({ mode: "read" });
+        if (req !== "granted") {
+          log("권한이 허용되지 않아 이전 파일을 다시 열 수 없습니다.\n다시 '엑셀 선택(권장)'으로 선택해주세요.");
+          return;
         }
-      } catch {
-        $("prevBtn").disabled = true;
+      }
+      const file = await handle.getFile();
+      setHandlePill(true, file.name);
+      const wb = await readFileToWorkbook(file);
+      await loadWorkbook(wb, file.name);
+    } catch (e) {
+      log("이전 파일을 여는 중 오류가 발생했습니다.\n" + (e?.message || e));
+    }
+  }
+
+  // ---------- File input fallback ----------
+  fileInput.addEventListener("change", async (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    setHandlePill(false, "폴백(input)");
+    const wb = await readFileToWorkbook(file);
+    await loadWorkbook(wb, file.name);
+  });
+
+  btnPick.addEventListener("click", pickWithFS);
+  btnReopen.addEventListener("click", reopenLast);
+
+  // try to show whether a handle exists
+  (async () => {
+    try {
+      const handle = await idbGet("last_handle");
+      if (handle) setHandlePill(true, "저장됨(재열기 가능)");
+      else setHandlePill(false, "없음");
+    } catch {
+      setHandlePill(false, "사용 불가");
+    }
+  })();
+
+  // ---------- PDF layout ----------
+  // A4: 210x297mm. jsPDF default unit "mm" here.
+  function drawHeader(doc, titleText) {
+    doc.setFontSize(11);
+    doc.text(titleText, 10, 10);
+
+    // Name / Score boxes at top
+    const y = 14;
+    const boxH = 10;
+    const leftW = 95;
+    const rightW = 95;
+    doc.rect(10, y, leftW, boxH);
+    doc.rect(105, y, rightW, boxH);
+    doc.setFontSize(10);
+    doc.text("이름", 10 + leftW/2, y + 6, { align: "center" });
+    doc.text("점수", 105 + rightW/2, y + 6, { align: "center" });
+  }
+
+  function drawTable(doc, x, y, w, rows, isAnswer) {
+    // columns: 번호 / 단어 / 의미(또는 빈칸)
+    const colNo = 12;
+    const colWord = 38;
+    const colMean = w - colNo - colWord;
+
+    const rowH = 7;
+    const headH = 7;
+
+    // outer border + header row
+    doc.setLineWidth(0.2);
+    doc.rect(x, y, w, headH + rows.length * rowH);
+
+    // vertical lines
+    doc.line(x + colNo, y, x + colNo, y + headH + rows.length*rowH);
+    doc.line(x + colNo + colWord, y, x + colNo + colWord, y + headH + rows.length*rowH);
+
+    // header separator
+    doc.line(x, y + headH, x + w, y + headH);
+
+    doc.setFontSize(9);
+    doc.text("번호", x + colNo/2, y + 4.8, { align: "center" });
+    doc.text("단어", x + colNo + colWord/2, y + 4.8, { align: "center" });
+    doc.text(isAnswer ? "의미" : "의미", x + colNo + colWord + colMean/2, y + 4.8, { align: "center" });
+
+    // rows
+    for (let i = 0; i < rows.length; i++) {
+      const ry = y + headH + i * rowH;
+
+      // horizontal line
+      doc.line(x, ry + rowH, x + w, ry + rowH);
+
+      const no = String(rows[i].no);
+      const word = rows[i].word;
+      const meaning = rows[i].meaning;
+
+      doc.setFontSize(9);
+      doc.text(no, x + colNo/2, ry + 4.9, { align: "center" });
+      doc.text(word, x + colNo + 1.5, ry + 4.9);
+
+      if (isAnswer) {
+        doc.text(meaning, x + colNo + colWord + 1.5, ry + 4.9);
+      } else {
+        // problem sheet: leave blank (optionally draw light line)
+        // doc.text("", ...)
       }
     }
+  }
 
-    // ===== 이벤트 =====
-    $("pickBtn").addEventListener("click", async () => {
-      try { await pickExcelAuto(); }
-      catch (e) { log(e.message || String(e), "bad"); }
-    });
+  function chunk(array, size) {
+    const out = [];
+    for (let i = 0; i < array.length; i += size) out.push(array.slice(i, i + size));
+    return out;
+  }
 
-    $("prevBtn").addEventListener("click", async () => {
-      try { await usePreviousFile(); }
-      catch (e) { log(e.message || String(e), "bad"); }
-    });
+  function buildPagesForDayRange(data, dayFrom, dayTo, perDay) {
+    // pick days, then take up to perDay each day, then concatenate in day order
+    const days = [];
+    for (let d = dayFrom; d <= dayTo; d++) days.push(d);
 
-    $("genBtn").addEventListener("click", async () => {
+    const selected = [];
+    for (const d of days) {
+      const items = data.filter(r => r.day === d);
+      selected.push(...items.slice(0, perDay));
+    }
+
+    // convert to numbered rows, then paginate 30 per page (15 left + 15 right)
+    const numbered = selected.map((r, idx) => ({ no: idx + 1, word: r.word, meaning: r.meaning, day: r.day }));
+    const pages = chunk(numbered, 30);
+    return { pages, total: numbered.length };
+  }
+
+  // ---------- Saving ----------
+  async function savePdf(doc, defaultName) {
+    if (supportsFS) {
       try {
-        $("downloadQ").disabled = true;
-        $("downloadA").disabled = true;
-        pdfBlobQ = null;
-        pdfBlobA = null;
-
-        assert(currentHandle || currentFile, "먼저 ‘엑셀 파일 불러오기’를 해주세요.");
-
-        const dayStart = toInt($("dayStart").value);
-        const dayEnd   = toInt($("dayEnd").value);
-        const count    = toInt($("count").value);
-
-        assert(dayStart !== null && dayEnd !== null, "Day 값이 올바르지 않습니다.");
-        assert(dayEnd >= dayStart, "Day 끝값이 시작값보다 작습니다.");
-        assert(count !== null && count > 0, "출제 개수는 1 이상이어야 합니다.");
-
-        log("엑셀 읽는 중…");
-
-        const { shownName, sheetName, rows } = await readExcelFromSource();
-        assert(rows.length > 0, "엑셀에서 유효한 데이터( day/단어/뜻 )를 찾지 못했습니다.");
-
-        const inRange = rows.filter(r => r.day >= dayStart && r.day <= dayEnd);
-        assert(inRange.length > 0, "해당 Day 범위에 데이터가 없습니다.");
-
-        const questions = pickQuestions(rows, dayStart, dayEnd, count);
-        const titleText = `Day ${dayStart}~${dayEnd}`;
-
-        log(
-          `파일: ${shownName}\n` +
-          `선택 시트: ${sheetName}\n` +
-          `데이터(범위 내): ${inRange.length}개\n` +
-          `출제: ${count}문항\n` +
-          `PDF 생성 중…`
-        );
-
-        pdfBlobQ = await buildPdf(titleText, questions, false);
-        pdfBlobA = await buildPdf(titleText, questions, true);
-
-        $("downloadQ").disabled = false;
-        $("downloadA").disabled = false;
-        log("완료! 아래 버튼으로 PDF를 다운로드하세요.", "good");
+        const handle = await window.showSaveFilePicker({
+          suggestedName: defaultName,
+          types: [{ description: "PDF", accept: { "application/pdf": [".pdf"] } }]
+        });
+        const writable = await handle.createWritable();
+        const blob = doc.output("blob");
+        await writable.write(blob);
+        await writable.close();
+        return true;
       } catch (e) {
-        console.error(e);
-        log(e.message || String(e), "bad");
+        // user canceled -> fallback download
       }
+    }
+    doc.save(defaultName);
+    return true;
+  }
+
+  // ---------- Generate PDFs ----------
+  btnGenerate.addEventListener("click", async () => {
+    if (!parsedRows.length) return;
+
+    const dayFrom = Number(dayFromEl.value || 1);
+    const dayTo = Number(dayToEl.value || dayFrom);
+    const perDay = Number(perDayEl.value || 30);
+
+    if (!(dayFrom >= 1 && dayTo >= dayFrom)) {
+      log("Day 범위를 확인해주세요. (시작 <= 끝)");
+      return;
+    }
+    if (!(perDay >= 1)) {
+      log("Day당 문항 수는 1 이상이어야 합니다.");
+      return;
+    }
+
+    const { pages, total } = buildPagesForDayRange(parsedRows, dayFrom, dayTo, perDay);
+    if (!total) {
+      log(`선택한 Day 범위(Day ${dayFrom}~${dayTo})에 데이터가 없습니다.`);
+      return;
+    }
+
+    // Problem PDF
+    const prob = new jsPDF({ unit: "mm", format: "a4" });
+    await ensureFont(prob);
+    if (fontReady) prob.setFont(FONT_NAME, FONT_STYLE);
+
+    // Answer PDF
+    const ans = new jsPDF({ unit: "mm", format: "a4" });
+    await ensureFont(ans);
+    if (fontReady) ans.setFont(FONT_NAME, FONT_STYLE);
+
+    const titleRange = `Day ${dayFrom}~${dayTo}`;
+    const probName = `문제지_${titleRange}.pdf`;
+    const ansName = `답안지_${titleRange}.pdf`;
+
+    const pageDraw = (doc, pageRows, isAnswer, pageIndex) => {
+      if (pageIndex > 0) doc.addPage();
+      if (fontReady) doc.setFont(FONT_NAME, FONT_STYLE);
+
+      drawHeader(doc, titleRange);
+
+      // Two tables side by side
+      const topY = 28;
+      const tableW = 95;
+      const leftX = 10;
+      const rightX = 105;
+
+      const leftRows = pageRows.slice(0, 15);
+      const rightRows = pageRows.slice(15, 30);
+
+      drawTable(doc, leftX, topY, tableW, leftRows, isAnswer);
+      if (rightRows.length) drawTable(doc, rightX, topY, tableW, rightRows, isAnswer);
+    };
+
+    pages.forEach((pageRows, idx) => {
+      pageDraw(prob, pageRows, false, idx);
+      pageDraw(ans, pageRows, true, idx);
     });
 
-    $("downloadQ").addEventListener("click", () => { if (pdfBlobQ) downloadBlob(pdfBlobQ, "문제지.pdf"); });
-    $("downloadA").addEventListener("click", () => { if (pdfBlobA) downloadBlob(pdfBlobA, "답안지.pdf"); });
+    log(`PDF 생성 완료!\n- 선택 범위: ${titleRange}\n- 총 문항: ${total}\n- 페이지: ${pages.length}\n\n이제 저장을 진행합니다…`);
 
-    (async () => {
-      await ensurePrevButtonState();
-      log("대기 중…");
-    })();
-  </script>
+    await savePdf(prob, probName);
+    await savePdf(ans, ansName);
+
+    log(`완료!\n- ${probName}\n- ${ansName}\n\n팁: 크롬(PC/맥)에서는 '이전 파일 다시 열기'로 다음에도 빠르게 시작할 수 있어요.`);
+  });
+
+})();
+</script>
 </body>
 </html>
