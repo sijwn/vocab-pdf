@@ -24,13 +24,15 @@
 <body>
   <div class="card">
     <h2 style="margin:0 0 8px;">영단어 문제지/답안지 PDF 생성기 (GitHub Pages)</h2>
-    <div class="muted">엑셀 파일을 한 번 선택하면(권한 허용 시) 다음부터 ‘이전 파일 불러오기’로 바로 실행할 수 있어요.</div>
 
     <div class="row" style="margin-top:14px;">
       <button class="secondary" id="pickBtn">엑셀 파일 불러오기</button>
       <button class="secondary" id="prevBtn" disabled>이전 파일 불러오기</button>
       <span class="pill" id="fileLabel">파일: (선택 안 됨)</span>
     </div>
+
+    <!-- iOS/사파리/미지원 브라우저용 파일 입력(숨김) -->
+    <input id="fileInput" type="file" accept=".xlsx,.xls" style="display:none" />
 
     <div class="row">
       <label>Day 범위:</label>
@@ -51,7 +53,7 @@
 
     <div class="muted" style="margin-top:10px;">
       시트 이름은 <b>Sheet1</b>을 우선 사용하고, 없으면 첫 번째 시트를 사용합니다. (A=day, B=단어, C=뜻)
-      <br/>※ ‘이전 파일 불러오기’는 크롬/엣지(데스크톱, 일부 안드로이드)에서 잘 동작합니다. (iOS 사파리는 제한될 수 있어요)
+      <br/>※ iPhone/iPad(Safari)는 ‘이전 파일 불러오기’가 제한될 수 있어 파일을 매번 다시 선택해야 할 수 있어요.
     </div>
   </div>
 
@@ -59,43 +61,47 @@
   <script src="./jspdf.umd.min.js"></script>
 
   <script>
-    // ===== 한글 폰트 임베드 =====
-    const KOREAN_FONT_FILE = "./NotoSansKR-VariableFont_wght.ttf"; // 레포 루트에 올린 파일명
-    const KOREAN_FONT_VFS_NAME = "NotoSansKR-VariableFont_wght.ttf";
-    const KOREAN_FONT_FAMILY = "NotoSansKR";
-    
-    let KOREAN_FONT_READY = false;
-    
-    async function ensureKoreanFont(doc) {
-      if (KOREAN_FONT_READY) return;
-    
-      const res = await fetch(KOREAN_FONT_FILE);
-      if (!res.ok) {
-        throw new Error("한글 폰트 파일을 불러오지 못했습니다: " + KOREAN_FONT_FILE);
-      }
-    
-      const buf = await res.arrayBuffer();
-    
-      // ArrayBuffer -> base64
-      const bytes = new Uint8Array(buf);
-      let bin = "";
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      const b64 = btoa(bin);
-    
-      // jsPDF에 폰트 등록
-      doc.addFileToVFS(KOREAN_FONT_VFS_NAME, b64);
-      doc.addFont(KOREAN_FONT_VFS_NAME, KOREAN_FONT_FAMILY, "normal");
-    
-      KOREAN_FONT_READY = true;
-    }
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
 
+    // ===== 한글 폰트 임베드 =====
+    const KOREAN_FONT_FILE = "./NotoSansKR-VariableFont_wght.ttf";
+    const KOREAN_FONT_VFS_NAME = "NotoSansKR-VariableFont_wght.ttf";
+    const KOREAN_FONT_FAMILY = "NotoSansKR";
+    let KOREAN_FONT_READY = false;
+
+    function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      const chunkSize = 0x8000; // 32KB
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
+    }
+
+    async function ensureKoreanFont(doc) {
+      if (KOREAN_FONT_READY) return;
+
+      const res = await fetch(KOREAN_FONT_FILE);
+      if (!res.ok) throw new Error("한글 폰트 파일을 불러오지 못했습니다: " + KOREAN_FONT_FILE);
+
+      const buf = await res.arrayBuffer();
+      const b64 = arrayBufferToBase64(buf);
+
+      doc.addFileToVFS(KOREAN_FONT_VFS_NAME, b64);
+      doc.addFont(KOREAN_FONT_VFS_NAME, KOREAN_FONT_FAMILY, "normal");
+      KOREAN_FONT_READY = true;
+    }
+
+    // ===== 상태/유틸 =====
     let pdfBlobQ = null;
     let pdfBlobA = null;
 
-    // 현재 선택된 파일 핸들
+    // FS Access 지원 브라우저용
     let currentHandle = null;
+    // iOS/사파리용
+    let currentFile = null;
 
     function log(msg, cls="") {
       statusEl.textContent = msg;
@@ -107,10 +113,11 @@
       if (!Number.isFinite(n)) return null;
       return Math.trunc(n);
     }
+    function supportsFSAccess() {
+      return !!window.showOpenFilePicker;
+    }
 
-    // =========================
-    // IndexedDB에 파일 핸들 저장/로드 (핵심)
-    // =========================
+    // ===== IndexedDB: 파일 핸들 저장/로드 (FS Access 지원일 때만 의미 있음) =====
     const IDB_DB = "voca_pdf_app";
     const IDB_STORE = "kv";
     const KEY_HANDLE = "last_excel_handle";
@@ -127,7 +134,6 @@
         req.onerror = () => reject(req.error);
       });
     }
-
     async function idbSet(key, value) {
       const db = await idbOpen();
       return new Promise((resolve, reject) => {
@@ -137,7 +143,6 @@
         tx.onerror = () => reject(tx.error);
       });
     }
-
     async function idbGet(key) {
       const db = await idbOpen();
       return new Promise((resolve, reject) => {
@@ -147,80 +152,94 @@
         req.onerror = () => reject(req.error);
       });
     }
-
     async function saveLastHandle(handle) {
-      // 파일 핸들은 IndexedDB에 저장 가능(지원 브라우저에서)
       await idbSet(KEY_HANDLE, handle);
       await idbSet(KEY_LAST_NAME, handle?.name || "");
     }
+    async function loadLastHandle() { return await idbGet(KEY_HANDLE); }
+    async function loadLastName() { return (await idbGet(KEY_LAST_NAME)) || ""; }
 
-    async function loadLastHandle() {
-      return await idbGet(KEY_HANDLE);
-    }
+    // ===== 파일 선택(자동 폴백) =====
+    async function pickExcelAuto() {
+      pdfBlobQ = pdfBlobA = null;
+      $("downloadQ").disabled = true;
+      $("downloadA").disabled = true;
 
-    async function loadLastName() {
-      return (await idbGet(KEY_LAST_NAME)) || "";
-    }
+      if (supportsFSAccess()) {
+        // 크롬/엣지(데스크톱 등): 파일 핸들 선택 + 기억
+        const [handle] = await window.showOpenFilePicker({
+          multiple: false,
+          types: [{
+            description: "Excel 파일",
+            accept: {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+              "application/vnd.ms-excel": [".xls"],
+            }
+          }],
+        });
+        assert(handle, "파일을 선택하지 않았습니다.");
+        currentHandle = handle;
+        currentFile = null;
+        await saveLastHandle(handle);
 
-    // =========================
-    // 파일 선택/이전 파일 불러오기
-    // =========================
-    function supportsFSAccess() {
-      return !!window.showOpenFilePicker;
-    }
-
-    async function pickExcelFileAndRemember() {
-      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’(파일 기억) 기능을 지원하지 않습니다.\n크롬/엣지에서 사용해 주세요.");
-
-      const [handle] = await window.showOpenFilePicker({
-        multiple: false,
-        types: [{
-          description: "Excel 파일",
-          accept: {
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-            "application/vnd.ms-excel": [".xls"],
-          }
-        }],
-      });
-
-      assert(handle, "파일을 선택하지 않았습니다.");
-      currentHandle = handle;
-      await saveLastHandle(handle);
-
-      $("prevBtn").disabled = false;
-      $("genBtn").disabled = false;
-      $("fileLabel").textContent = `파일: ${handle.name}`;
-      log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
+        $("prevBtn").disabled = false;
+        $("genBtn").disabled = false;
+        $("fileLabel").textContent = `파일: ${handle.name}`;
+        log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
+      } else {
+        // iOS/사파리 등: input[type=file]로 폴백
+        $("fileInput").value = "";
+        $("fileInput").click();
+      }
     }
 
     async function usePreviousFile() {
-      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’를 지원하지 않습니다.\n크롬/엣지에서 사용해 주세요.");
-
+      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’를 지원하지 않습니다. iPhone/iPad에서는 파일을 다시 선택해 주세요.");
       const handle = await loadLastHandle();
       assert(handle, "저장된 이전 파일이 없습니다. 먼저 ‘엑셀 파일 불러오기’로 파일을 선택해 주세요.");
 
-      // 권한 확인/재요청
       let perm = await handle.queryPermission({ mode: "read" });
-      if (perm !== "granted") {
-        perm = await handle.requestPermission({ mode: "read" });
-      }
+      if (perm !== "granted") perm = await handle.requestPermission({ mode: "read" });
       assert(perm === "granted", "파일 접근 권한이 필요합니다. 권한을 허용해 주세요.");
 
       currentHandle = handle;
+      currentFile = null;
 
       $("genBtn").disabled = false;
       $("fileLabel").textContent = `파일: ${handle.name}`;
       log("이전 파일 불러오기 완료. ‘PDF 생성’을 눌러주세요.", "good");
     }
 
-    async function readExcelFromHandle(handle) {
-      const file = await handle.getFile();
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
+    $("fileInput").addEventListener("change", () => {
+      const f = $("fileInput").files?.[0];
+      if (!f) return;
+      currentFile = f;
+      currentHandle = null;
 
+      $("prevBtn").disabled = true;   // iOS 폴백에서는 의미 없음
+      $("genBtn").disabled = false;
+      $("fileLabel").textContent = `파일: ${f.name}`;
+      log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
+    });
+
+    // ===== 엑셀 읽기: handle 또는 file =====
+    async function readExcelFromSource() {
+      let buf;
+      let shownName = "";
+      if (currentHandle) {
+        const file = await currentHandle.getFile();
+        buf = await file.arrayBuffer();
+        shownName = currentHandle.name;
+      } else if (currentFile) {
+        buf = await currentFile.arrayBuffer();
+        shownName = currentFile.name;
+      } else {
+        throw new Error("먼저 엑셀 파일을 선택해 주세요.");
+      }
+
+      const wb = XLSX.read(buf, { type: "array" });
       const sheetName = wb.SheetNames.includes("Sheet1") ? "Sheet1" : wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-
       const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
 
       const rows = [];
@@ -234,12 +253,10 @@
         rows.push({ day, word, mean });
       }
 
-      return { sheetName, rows };
+      return { shownName, sheetName, rows };
     }
 
-    // =========================
-    // 문제 선택 로직
-    // =========================
+    // ===== 문제 선택 로직 =====
     function shuffleInPlace(arr) {
       for (let i = arr.length - 1; i > 0; i--) {
         const j = (Math.random() * (i + 1)) | 0;
@@ -251,7 +268,6 @@
       const days = [];
       for (let d = dayStart; d <= dayEnd; d++) days.push(d);
 
-      // day별 후보
       const byDay = new Map();
       for (const d of days) byDay.set(d, []);
       for (const r of rows) {
@@ -297,24 +313,20 @@
       }));
     }
 
-    // =========================
-    // PDF 생성 (A4 세로, 페이지당 64문항)
-    // =========================
+    // ===== PDF 생성 (A4 세로, 페이지당 64문항) =====
     async function buildPdf(titleText, questions, includeMeaning) {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-    
-      await ensureKoreanFont(doc);
-      doc.setFont(KOREAN_FONT_FAMILY, "normal");
 
-      const pageW = 210, pageH = 297;
+      await ensureKoreanFont(doc);
+      doc.setFont(KOREAN_FONT_FAMILY, "normal"); // 한글 폰트 유지(중요)
+
+      const pageW = 210;
       const marginY = 10;
 
-      // 테이블 폭(너비 짧게) + 가운데 정렬
       const tableW = 190;
       const tableX = (pageW - tableW) / 2;
 
-      // 열 너비(컴팩트)
       const wNo = 8, wWord = 34, wMean = 45, wGap = 6;
       const colW = [wNo, wWord, wMean, wGap, wNo, wWord, wMean];
 
@@ -334,6 +346,7 @@
         let y = marginY;
 
         // 제목
+        doc.setFont(KOREAN_FONT_FAMILY, "normal");
         doc.setFontSize(14);
         doc.text(titleText, pageW/2, y + 7, { align: "center" });
         doc.setDrawColor(0);
@@ -358,7 +371,6 @@
         // 헤더
         const headerLabels = ["번호","단어","의미","","번호","단어","의미"];
         doc.setFontSize(10);
-
         let x = tableX;
         for (let c=0;c<7;c++){
           doc.rect(x, y, colW[c], hHead);
@@ -436,23 +448,15 @@
       }
     }
 
-    // =========================
-    // 이벤트
-    // =========================
+    // ===== 이벤트 =====
     $("pickBtn").addEventListener("click", async () => {
-      try {
-        await pickExcelFileAndRemember();
-      } catch (e) {
-        log(e.message || String(e), "bad");
-      }
+      try { await pickExcelAuto(); }
+      catch (e) { log(e.message || String(e), "bad"); }
     });
 
     $("prevBtn").addEventListener("click", async () => {
-      try {
-        await usePreviousFile();
-      } catch (e) {
-        log(e.message || String(e), "bad");
-      }
+      try { await usePreviousFile(); }
+      catch (e) { log(e.message || String(e), "bad"); }
     });
 
     $("genBtn").addEventListener("click", async () => {
@@ -462,7 +466,7 @@
         pdfBlobQ = null;
         pdfBlobA = null;
 
-        assert(currentHandle, "먼저 ‘엑셀 파일 불러오기’ 또는 ‘이전 파일 불러오기’를 해주세요.");
+        assert(currentHandle || currentFile, "먼저 ‘엑셀 파일 불러오기’를 해주세요.");
 
         const dayStart = toInt($("dayStart").value);
         const dayEnd   = toInt($("dayEnd").value);
@@ -474,7 +478,7 @@
 
         log("엑셀 읽는 중…");
 
-        const { sheetName, rows } = await readExcelFromHandle(currentHandle);
+        const { shownName, sheetName, rows } = await readExcelFromSource();
         assert(rows.length > 0, "엑셀에서 유효한 데이터( day/단어/뜻 )를 찾지 못했습니다.");
 
         const inRange = rows.filter(r => r.day >= dayStart && r.day <= dayEnd);
@@ -484,6 +488,7 @@
         const titleText = `Day ${dayStart}~${dayEnd}`;
 
         log(
+          `파일: ${shownName}\n` +
           `선택 시트: ${sheetName}\n` +
           `데이터(범위 내): ${inRange.length}개\n` +
           `출제: ${count}문항\n` +
@@ -495,7 +500,6 @@
 
         $("downloadQ").disabled = false;
         $("downloadA").disabled = false;
-
         log("완료! 아래 버튼으로 PDF를 다운로드하세요.", "good");
       } catch (e) {
         console.error(e);
@@ -506,11 +510,11 @@
     $("downloadQ").addEventListener("click", () => { if (pdfBlobQ) downloadBlob(pdfBlobQ, "문제지.pdf"); });
     $("downloadA").addEventListener("click", () => { if (pdfBlobA) downloadBlob(pdfBlobA, "답안지.pdf"); });
 
-    // 초기 상태 세팅
+    // 초기 상태
     (async () => {
       await ensurePrevButtonState();
       if (!supportsFSAccess()) {
-        log("이 브라우저는 ‘이전 파일 불러오기’(파일 기억) 기능이 제한될 수 있어요. 크롬/엣지를 추천합니다.");
+        log("대기 중… (iPhone/iPad에서는 파일을 매번 다시 선택해야 할 수 있어요)");
       } else {
         log("대기 중…");
       }
