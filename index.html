@@ -55,6 +55,36 @@
     </div>
   </div>
 
+  // ===== 한글 폰트 임베드 =====
+  const KOREAN_FONT_FILE = "./NotoSansKR-VariableFont_wght.ttf"; // 레포 루트에 올린 파일명
+  const KOREAN_FONT_VFS_NAME = "NotoSansKR-VariableFont_wght.ttf";
+  const KOREAN_FONT_FAMILY = "NotoSansKR";
+  
+  let KOREAN_FONT_READY = false;
+  
+  async function ensureKoreanFont(doc) {
+    if (KOREAN_FONT_READY) return;
+  
+    const res = await fetch(KOREAN_FONT_FILE);
+    if (!res.ok) {
+      throw new Error("한글 폰트 파일을 불러오지 못했습니다: " + KOREAN_FONT_FILE);
+    }
+  
+    const buf = await res.arrayBuffer();
+  
+    // ArrayBuffer -> base64
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const b64 = btoa(bin);
+  
+    // jsPDF에 폰트 등록
+    doc.addFileToVFS(KOREAN_FONT_VFS_NAME, b64);
+    doc.addFont(KOREAN_FONT_VFS_NAME, KOREAN_FONT_FAMILY, "normal");
+  
+    KOREAN_FONT_READY = true;
+  }
+
   <script src="./xlsx.full.min.js"></script>
   <script src="./jspdf.umd.min.js"></script>
 
@@ -271,9 +301,12 @@
     // =========================
     // PDF 생성 (A4 세로, 페이지당 64문항)
     // =========================
-    function buildPdf(titleText, questions, includeMeaning) {
+    async function buildPdf(titleText, questions, includeMeaning) {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    
+      await ensureKoreanFont(doc);
+      doc.setFont(KOREAN_FONT_FAMILY, "normal");
 
       const pageW = 210, pageH = 297;
       const marginY = 10;
@@ -460,8 +493,8 @@
           `PDF 생성 중…`
         );
 
-        pdfBlobQ = buildPdf(titleText, questions, false);
-        pdfBlobA = buildPdf(titleText, questions, true);
+        pdfBlobQ = await buildPdf(titleText, questions, false);
+        pdfBlobA = await buildPdf(titleText, questions, true);
 
         $("downloadQ").disabled = false;
         $("downloadA").disabled = false;
