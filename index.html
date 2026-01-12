@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>영단어 문제지/답안지 PDF 생성기</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Apple SD Gothic Neo, "Noto Sans KR", sans-serif; margin: 18px; }
+    .card { max-width: 860px; margin: 0 auto; padding: 16px; border: 1px solid #ddd; border-radius: 12px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+    label { font-size: 14px; }
+    input[type="number"] { width: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 10px; }
+    button { padding: 10px 14px; border: 0; border-radius: 10px; cursor: pointer; }
+    button.primary { background: #111; color: #fff; }
+    button.secondary { background: #eee; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .muted { color: #666; font-size: 13px; }
+    .log { white-space: pre-wrap; background: #fafafa; border: 1px solid #eee; border-radius: 12px; padding: 12px; font-size: 13px; }
+    .bad { color: #b00020; }
+    .good { color: #0a7a3a; }
+    .pill { display:inline-block; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; font-size: 12px; color:#444; background:#fff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin:0 0 8px;">영단어 문제지/답안지 PDF 생성기 (GitHub Pages)</h2>
+    <div class="muted">엑셀 파일을 한 번 선택하면(권한 허용 시) 다음부터 ‘이전 파일 불러오기’로 바로 실행할 수 있어요.</div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="secondary" id="pickBtn">엑셀 파일 불러오기</button>
+      <button class="secondary" id="prevBtn" disabled>이전 파일 불러오기</button>
+      <span class="pill" id="fileLabel">파일: (선택 안 됨)</span>
+    </div>
+
+    <div class="row">
+      <label>Day 범위:</label>
+      <input id="dayStart" type="number" min="0" value="1" />
+      <span>~</span>
+      <input id="dayEnd" type="number" min="0" value="2" />
+      <label style="margin-left:10px;">출제 개수:</label>
+      <input id="count" type="number" min="1" value="30" />
+    </div>
+
+    <div class="row">
+      <button class="primary" id="genBtn" disabled>PDF 생성</button>
+      <button class="secondary" id="downloadQ" disabled>문제지.pdf 다운로드</button>
+      <button class="secondary" id="downloadA" disabled>답안지.pdf 다운로드</button>
+    </div>
+
+    <div id="status" class="log" style="margin-top:12px;">대기 중…</div>
+
+    <div class="muted" style="margin-top:10px;">
+      시트 이름은 <b>Sheet1</b>을 우선 사용하고, 없으면 첫 번째 시트를 사용합니다. (A=day, B=단어, C=뜻)
+      <br/>※ ‘이전 파일 불러오기’는 크롬/엣지(데스크톱, 일부 안드로이드)에서 잘 동작합니다. (iOS 사파리는 제한될 수 있어요)
+    </div>
+  </div>
+
+  <!-- SheetJS (xlsx 읽기) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+  <!-- jsPDF (PDF 생성) -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+
+    let pdfBlobQ = null;
+    let pdfBlobA = null;
+
+    // 현재 선택된 파일 핸들
+    let currentHandle = null;
+
+    function log(msg, cls="") {
+      statusEl.textContent = msg;
+      statusEl.className = "log " + cls;
+    }
+    function assert(cond, msg) { if (!cond) throw new Error(msg); }
+    function toInt(x) {
+      const n = Number(x);
+      if (!Number.isFinite(n)) return null;
+      return Math.trunc(n);
+    }
+
+    // =========================
+    // IndexedDB에 파일 핸들 저장/로드 (핵심)
+    // =========================
+    const IDB_DB = "voca_pdf_app";
+    const IDB_STORE = "kv";
+    const KEY_HANDLE = "last_excel_handle";
+    const KEY_LAST_NAME = "last_excel_name";
+
+    function idbOpen() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(IDB_DB, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function idbSet(key, value) {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function idbGet(key) {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function saveLastHandle(handle) {
+      // 파일 핸들은 IndexedDB에 저장 가능(지원 브라우저에서)
+      await idbSet(KEY_HANDLE, handle);
+      await idbSet(KEY_LAST_NAME, handle?.name || "");
+    }
+
+    async function loadLastHandle() {
+      return await idbGet(KEY_HANDLE);
+    }
+
+    async function loadLastName() {
+      return (await idbGet(KEY_LAST_NAME)) || "";
+    }
+
+    // =========================
+    // 파일 선택/이전 파일 불러오기
+    // =========================
+    function supportsFSAccess() {
+      return !!window.showOpenFilePicker;
+    }
+
+    async function pickExcelFileAndRemember() {
+      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’(파일 기억) 기능을 지원하지 않습니다.\n크롬/엣지에서 사용해 주세요.");
+
+      const [handle] = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{
+          description: "Excel 파일",
+          accept: {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+            "application/vnd.ms-excel": [".xls"],
+          }
+        }],
+      });
+
+      assert(handle, "파일을 선택하지 않았습니다.");
+      currentHandle = handle;
+      await saveLastHandle(handle);
+
+      $("prevBtn").disabled = false;
+      $("genBtn").disabled = false;
+      $("fileLabel").textContent = `파일: ${handle.name}`;
+      log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
+    }
+
+    async function usePreviousFile() {
+      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’를 지원하지 않습니다.\n크롬/엣지에서 사용해 주세요.");
+
+      const handle = await loadLastHandle();
+      assert(handle, "저장된 이전 파일이 없습니다. 먼저 ‘엑셀 파일 불러오기’로 파일을 선택해 주세요.");
+
+      // 권한 확인/재요청
+      let perm = await handle.queryPermission({ mode: "read" });
+      if (perm !== "granted") {
+        perm = await handle.requestPermission({ mode: "read" });
+      }
+      assert(perm === "granted", "파일 접근 권한이 필요합니다. 권한을 허용해 주세요.");
+
+      currentHandle = handle;
+
+      $("genBtn").disabled = false;
+      $("fileLabel").textContent = `파일: ${handle.name}`;
+      log("이전 파일 불러오기 완료. ‘PDF 생성’을 눌러주세요.", "good");
+    }
+
+    async function readExcelFromHandle(handle) {
+      const file = await handle.getFile();
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+
+      const sheetName = wb.SheetNames.includes("Sheet1") ? "Sheet1" : wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+
+      const rows = [];
+      for (const r of data) {
+        if (!r || r.length < 2) continue;
+        const day = toInt(r[0]);
+        const word = (r[1] ?? "").toString().trim();
+        const mean = (r[2] ?? "").toString().trim();
+        if (day === null) continue;
+        if (!word) continue;
+        rows.push({ day, word, mean });
+      }
+
+      return { sheetName, rows };
+    }
+
+    // =========================
+    // 문제 선택 로직
+    // =========================
+    function shuffleInPlace(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = (Math.random() * (i + 1)) | 0;
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+
+    function pickQuestions(rows, dayStart, dayEnd, nQuestions) {
+      const days = [];
+      for (let d = dayStart; d <= dayEnd; d++) days.push(d);
+
+      // day별 후보
+      const byDay = new Map();
+      for (const d of days) byDay.set(d, []);
+      for (const r of rows) {
+        if (r.day >= dayStart && r.day <= dayEnd) byDay.get(r.day).push({ ...r });
+      }
+
+      const base = Math.floor(nQuestions / days.length);
+      const rem  = nQuestions % days.length;
+
+      const remaining = new Map();
+      for (const d of days) remaining.set(d, byDay.get(d).slice());
+
+      const chosen = [];
+      let deficit = 0;
+
+      for (let i=0;i<days.length;i++){
+        const d = days[i];
+        const need = base + (i < rem ? 1 : 0);
+        const pool = remaining.get(d);
+
+        if (need <= pool.length) {
+          shuffleInPlace(pool);
+          chosen.push(...pool.splice(0, need));
+        } else {
+          chosen.push(...pool.splice(0, pool.length));
+          deficit += (need - pool.length);
+        }
+      }
+
+      if (deficit > 0) {
+        const rest = [];
+        for (const d of days) rest.push(...remaining.get(d));
+        assert(deficit <= rest.length, `문제 수가 데이터보다 많습니다. 가능한 최대: ${chosen.length + rest.length}`);
+        shuffleInPlace(rest);
+        chosen.push(...rest.slice(0, deficit));
+      }
+
+      shuffleInPlace(chosen);
+      const finalChosen = chosen.slice(0, nQuestions);
+
+      return finalChosen.map((x, idx) => ({
+        no: idx+1, word: x.word, mean: x.mean, day: x.day
+      }));
+    }
+
+    // =========================
+    // PDF 생성 (A4 세로, 페이지당 64문항)
+    // =========================
+    function buildPdf(titleText, questions, includeMeaning) {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+
+      const pageW = 210, pageH = 297;
+      const marginY = 10;
+
+      // 테이블 폭(너비 짧게) + 가운데 정렬
+      const tableW = 190;
+      const tableX = (pageW - tableW) / 2;
+
+      // 열 너비(컴팩트)
+      const wNo = 8, wWord = 34, wMean = 45, wGap = 6;
+      const colW = [wNo, wWord, wMean, wGap, wNo, wWord, wMean];
+
+      const hTitle = 10, hInfo = 8, hHead = 8, hRow = 6;
+
+      doc.setFont("helvetica", "normal");
+
+      const maxPerPage = 64;
+      const pageCount = Math.max(1, Math.ceil(questions.length / maxPerPage));
+
+      for (let p = 0; p < pageCount; p++) {
+        if (p > 0) doc.addPage();
+
+        const chunk = questions.slice(p * maxPerPage, (p+1) * maxPerPage);
+        const rowsPerCol = Math.ceil(chunk.length / 2);
+        const left = chunk.slice(0, rowsPerCol);
+        const right = chunk.slice(rowsPerCol);
+
+        let y = marginY;
+
+        // 제목
+        doc.setFontSize(14);
+        doc.text(titleText, pageW/2, y + 7, { align: "center" });
+        doc.setDrawColor(0);
+        doc.rect(tableX, y, tableW, hTitle);
+        y += hTitle;
+
+        // 이름/점수
+        doc.setFontSize(10);
+        const leftBoxW = colW[0] + colW[1] + colW[2];
+        const rightBoxW = colW[4] + colW[5] + colW[6];
+
+        doc.rect(tableX, y, leftBoxW, hInfo);
+        doc.text("이름", tableX + leftBoxW/2, y + 5.5, { align: "center" });
+
+        doc.rect(tableX + leftBoxW, y, colW[3], hInfo);
+
+        doc.rect(tableX + leftBoxW + colW[3], y, rightBoxW, hInfo);
+        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW/2, y + 5.5, { align: "center" });
+
+        y += hInfo;
+
+        // 헤더
+        const headerLabels = ["번호","단어","의미","","번호","단어","의미"];
+        doc.setFontSize(10);
+
+        let x = tableX;
+        for (let c=0;c<7;c++){
+          doc.rect(x, y, colW[c], hHead);
+          if (headerLabels[c]) doc.text(headerLabels[c], x + colW[c]/2, y + 5.5, { align: "center" });
+          x += colW[c];
+        }
+        y += hHead;
+
+        // 본문
+        doc.setFontSize(9);
+
+        for (let i=0;i<rowsPerCol;i++){
+          const L = left[i];
+          const R = right[i];
+
+          // Left
+          let x0 = tableX;
+          doc.rect(x0, y, colW[0], hRow);
+          doc.rect(x0+colW[0], y, colW[1], hRow);
+          doc.rect(x0+colW[0]+colW[1], y, colW[2], hRow);
+
+          if (L) {
+            doc.text(String(L.no), x0 + colW[0]/2, y + 4.3, { align:"center" });
+            doc.text(L.word, x0 + colW[0] + 2, y + 4.3);
+            if (includeMeaning) doc.text(L.mean || "", x0 + colW[0] + colW[1] + 2, y + 4.3);
+          }
+
+          // Gap
+          doc.rect(x0+colW[0]+colW[1]+colW[2], y, colW[3], hRow);
+
+          // Right
+          const xr = x0+colW[0]+colW[1]+colW[2]+colW[3];
+          doc.rect(xr, y, colW[4], hRow);
+          doc.rect(xr+colW[4], y, colW[5], hRow);
+          doc.rect(xr+colW[4]+colW[5], y, colW[6], hRow);
+
+          if (R) {
+            doc.text(String(R.no), xr + colW[4]/2, y + 4.3, { align:"center" });
+            doc.text(R.word, xr + colW[4] + 2, y + 4.3);
+            if (includeMeaning) doc.text(R.mean || "", xr + colW[4] + colW[5] + 2, y + 4.3);
+          }
+
+          y += hRow;
+        }
+      }
+
+      return doc.output("blob");
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function ensurePrevButtonState() {
+      if (!supportsFSAccess()) {
+        $("prevBtn").disabled = true;
+        return;
+      }
+      try {
+        const h = await loadLastHandle();
+        $("prevBtn").disabled = !h;
+        const lastName = await loadLastName();
+        if (lastName && $("fileLabel").textContent.includes("(선택 안 됨)")) {
+          $("fileLabel").textContent = `파일: (이전: ${lastName})`;
+        }
+      } catch {
+        $("prevBtn").disabled = true;
+      }
+    }
+
+    // =========================
+    // 이벤트
+    // =========================
+    $("pickBtn").addEventListener("click", async () => {
+      try {
+        await pickExcelFileAndRemember();
+      } catch (e) {
+        log(e.message || String(e), "bad");
+      }
+    });
+
+    $("prevBtn").addEventListener("click", async () => {
+      try {
+        await usePreviousFile();
+      } catch (e) {
+        log(e.message || String(e), "bad");
+      }
+    });
+
+    $("genBtn").addEventListener("click", async () => {
+      try {
+        $("downloadQ").disabled = true;
+        $("downloadA").disabled = true;
+        pdfBlobQ = null;
+        pdfBlobA = null;
+
+        assert(currentHandle, "먼저 ‘엑셀 파일 불러오기’ 또는 ‘이전 파일 불러오기’를 해주세요.");
+
+        const dayStart = toInt($("dayStart").value);
+        const dayEnd   = toInt($("dayEnd").value);
+        const count    = toInt($("count").value);
+
+        assert(dayStart !== null && dayEnd !== null, "Day 값이 올바르지 않습니다.");
+        assert(dayEnd >= dayStart, "Day 끝값이 시작값보다 작습니다.");
+        assert(count !== null && count > 0, "출제 개수는 1 이상이어야 합니다.");
+
+        log("엑셀 읽는 중…");
+
+        const { sheetName, rows } = await readExcelFromHandle(currentHandle);
+        assert(rows.length > 0, "엑셀에서 유효한 데이터( day/단어/뜻 )를 찾지 못했습니다.");
+
+        const inRange = rows.filter(r => r.day >= dayStart && r.day <= dayEnd);
+        assert(inRange.length > 0, "해당 Day 범위에 데이터가 없습니다.");
+
+        const questions = pickQuestions(rows, dayStart, dayEnd, count);
+        const titleText = `Day ${dayStart}~${dayEnd}`;
+
+        log(
+          `선택 시트: ${sheetName}\n` +
+          `데이터(범위 내): ${inRange.length}개\n` +
+          `출제: ${count}문항\n` +
+          `PDF 생성 중…`
+        );
+
+        pdfBlobQ = buildPdf(titleText, questions, false);
+        pdfBlobA = buildPdf(titleText, questions, true);
+
+        $("downloadQ").disabled = false;
+        $("downloadA").disabled = false;
+
+        log("완료! 아래 버튼으로 PDF를 다운로드하세요.", "good");
+      } catch (e) {
+        console.error(e);
+        log(e.message || String(e), "bad");
+      }
+    });
+
+    $("downloadQ").addEventListener("click", () => { if (pdfBlobQ) downloadBlob(pdfBlobQ, "문제지.pdf"); });
+    $("downloadA").addEventListener("click", () => { if (pdfBlobA) downloadBlob(pdfBlobA, "답안지.pdf"); });
+
+    // 초기 상태 세팅
+    (async () => {
+      await ensurePrevButtonState();
+      if (!supportsFSAccess()) {
+        log("이 브라우저는 ‘이전 파일 불러오기’(파일 기억) 기능이 제한될 수 있어요. 크롬/엣지를 추천합니다.");
+      } else {
+        log("대기 중…");
+      }
+    })();
+  </script>
+</body>
+</html>
