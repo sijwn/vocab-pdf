@@ -363,14 +363,8 @@
         // 표 높이
         const tableH = hInfo + hHead + (rowsPerCol * hRow);
     
-        // ✅ 세로 중앙정렬 X → 아래쪽에 오게(두 번째 파일 느낌)
-        const bottomMargin = 18; // 필요하면 12~25 사이로 조절
-        let tableY = pageH - bottomMargin - tableH;
-    
-        // 너무 위로 올라가면 안전하게 최소값
-        const topSafe = 16;
-        if (tableY < topSafe) tableY = topSafe;
-    
+        const topMargin = 18;   // Day 텍스트 아래부터 표 시작(원하면 16~25로 조절)
+        let tableY = topMargin;
         let y = tableY;
     
         doc.setDrawColor(0);
