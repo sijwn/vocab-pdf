@@ -323,123 +323,127 @@
     async function buildPdf(titleText, questions, includeMeaning) {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-
-      // ★ doc마다 폰트 등록(답안지 깨짐 방지)
+    
       await ensureKoreanFont(doc);
-
+    
       const pageW = 210, pageH = 297;
-
-      // 가로는 "이전 위치" 느낌으로: 좌측 여백 10, 폭 190
+    
+      // 가로 위치는 이전처럼(왼쪽 여백 기준)
       const tableX = 10;
-      const tableW = 190;
-
-      // 열 너비(기존 느낌 유지)
+    
+      // 열 너비
       const wNo = 8, wWord = 34, wMean = 45, wGap = 6;
       const colW = [wNo, wWord, wMean, wGap, wNo, wWord, wMean];
-
+    
+      // ✅ 실제 열 너비 합계만큼만 테이블 폭을 잡아야 오른쪽 빈 박스가 안 생김
+      const tableW = colW.reduce((a, b) => a + b, 0); // = 180
+    
       const hInfo = 8, hHead = 8, hRow = 6;
-
-      // 선 굵기 "원래 얇게"
+    
+      // 선 굵기(원래 얇게)
       const outerLW = 0.35;
       const innerLW = 0.25;
-
+    
       const maxPerPage = 64;
       const pageCount = Math.max(1, Math.ceil(questions.length / maxPerPage));
-
+    
       for (let p = 0; p < pageCount; p++) {
         if (p > 0) doc.addPage();
-
-        // chunk
-        const chunk = questions.slice(p * maxPerPage, (p+1) * maxPerPage);
+    
+        const chunk = questions.slice(p * maxPerPage, (p + 1) * maxPerPage);
         const rowsPerCol = Math.ceil(chunk.length / 2);
         const left = chunk.slice(0, rowsPerCol);
         const right = chunk.slice(rowsPerCol);
-
-        // Day는 작은 글씨로 "상단 왼쪽" (박스 없음)
+    
+        // Day (작게, 위쪽 왼쪽, 박스 없음)
         doc.setFont(KOREAN_FONT_FAMILY, "normal");
         doc.setFontSize(10);
         doc.text(titleText, tableX, 10);
-
-        // 표 높이 계산 -> 세로 중앙정렬
+    
+        // 표 높이
         const tableH = hInfo + hHead + (rowsPerCol * hRow);
-
-        const topSafe = 16; // Day 아래 여백
-        let tableY = (pageH - tableH) / 2;
+    
+        // ✅ 세로 중앙정렬 X → 아래쪽에 오게(두 번째 파일 느낌)
+        const bottomMargin = 18; // 필요하면 12~25 사이로 조절
+        let tableY = pageH - bottomMargin - tableH;
+    
+        // 너무 위로 올라가면 안전하게 최소값
+        const topSafe = 16;
         if (tableY < topSafe) tableY = topSafe;
-
+    
         let y = tableY;
-
+    
         doc.setDrawColor(0);
-
+    
         // 이름/점수
-        const leftBoxW  = colW[0] + colW[1] + colW[2];
+        const leftBoxW = colW[0] + colW[1] + colW[2];
         const rightBoxW = colW[4] + colW[5] + colW[6];
-
+    
         doc.setLineWidth(outerLW);
         doc.rect(tableX, y, leftBoxW, hInfo);
         doc.rect(tableX + leftBoxW, y, colW[3], hInfo);
         doc.rect(tableX + leftBoxW + colW[3], y, rightBoxW, hInfo);
-
+    
         doc.setFontSize(10);
-        doc.text("이름", tableX + leftBoxW/2, y + 5.5, { align: "center" });
-        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW/2, y + 5.5, { align: "center" });
-
+        doc.text("이름", tableX + leftBoxW / 2, y + 5.5, { align: "center" });
+        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW / 2, y + 5.5, { align: "center" });
+    
         y += hInfo;
-
+    
         // 헤더
-        const headerLabels = ["번호","단어","의미","","번호","단어","의미"];
+        const headerLabels = ["번호", "단어", "의미", "", "번호", "단어", "의미"];
         doc.setLineWidth(innerLW);
-
+    
         let x = tableX;
-        for (let c=0;c<7;c++){
+        for (let c = 0; c < 7; c++) {
           doc.rect(x, y, colW[c], hHead);
-          if (headerLabels[c]) doc.text(headerLabels[c], x + colW[c]/2, y + 5.5, { align: "center" });
+          if (headerLabels[c]) doc.text(headerLabels[c], x + colW[c] / 2, y + 5.5, { align: "center" });
           x += colW[c];
         }
         y += hHead;
-
+    
         // 본문
         doc.setFontSize(9);
-
-        for (let i=0;i<rowsPerCol;i++){
+    
+        for (let i = 0; i < rowsPerCol; i++) {
           const L = left[i];
           const R = right[i];
-
+    
           // Left
           let x0 = tableX;
           doc.rect(x0, y, colW[0], hRow);
-          doc.rect(x0+colW[0], y, colW[1], hRow);
-          doc.rect(x0+colW[0]+colW[1], y, colW[2], hRow);
-
+          doc.rect(x0 + colW[0], y, colW[1], hRow);
+          doc.rect(x0 + colW[0] + colW[1], y, colW[2], hRow);
+    
           if (L) {
-            doc.text(String(L.no), x0 + colW[0]/2, y + 4.3, { align:"center" });
+            doc.text(String(L.no), x0 + colW[0] / 2, y + 4.3, { align: "center" });
             doc.text(L.word, x0 + colW[0] + 2, y + 4.3);
             if (includeMeaning) doc.text(L.mean || "", x0 + colW[0] + colW[1] + 2, y + 4.3);
           }
-
+    
           // Gap
-          doc.rect(x0+colW[0]+colW[1]+colW[2], y, colW[3], hRow);
-
+          doc.rect(x0 + colW[0] + colW[1] + colW[2], y, colW[3], hRow);
+    
           // Right
-          const xr = x0+colW[0]+colW[1]+colW[2]+colW[3];
+          const xr = x0 + colW[0] + colW[1] + colW[2] + colW[3];
           doc.rect(xr, y, colW[4], hRow);
-          doc.rect(xr+colW[4], y, colW[5], hRow);
-          doc.rect(xr+colW[4]+colW[5], y, colW[6], hRow);
-
+          doc.rect(xr + colW[4], y, colW[5], hRow);
+          doc.rect(xr + colW[4] + colW[5], y, colW[6], hRow);
+    
           if (R) {
-            doc.text(String(R.no), xr + colW[4]/2, y + 4.3, { align:"center" });
+            doc.text(String(R.no), xr + colW[4] / 2, y + 4.3, { align: "center" });
             doc.text(R.word, xr + colW[4] + 2, y + 4.3);
             if (includeMeaning) doc.text(R.mean || "", xr + colW[4] + colW[5] + 2, y + 4.3);
           }
-
+    
           y += hRow;
         }
-
-        // 바깥 테두리 한 번 더 (얇게)
+    
+        // 바깥 테두리(테이블 폭은 이제 정확히 열 합계라 오른쪽 빈 박스 없음)
         doc.setLineWidth(outerLW);
         doc.rect(tableX, tableY, tableW, tableH);
       }
-
+    
       return doc.output("blob");
     }
 
