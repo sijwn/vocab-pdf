@@ -31,7 +31,7 @@
       <span class="pill" id="fileLabel">파일: (선택 안 됨)</span>
     </div>
 
-    <!-- iOS/사파리/미지원 브라우저용 파일 입력(숨김) -->
+    <!-- iOS/사파리 폴백 -->
     <input id="fileInput" type="file" accept=".xlsx,.xls" style="display:none" />
 
     <div class="row">
@@ -53,7 +53,6 @@
 
     <div class="muted" style="margin-top:10px;">
       시트 이름은 <b>Sheet1</b>을 우선 사용하고, 없으면 첫 번째 시트를 사용합니다. (A=day, B=단어, C=뜻)
-      <br/>※ iPhone/iPad(Safari)는 ‘이전 파일 불러오기’가 제한될 수 있어 파일을 매번 다시 선택해야 할 수 있어요.
     </div>
   </div>
 
@@ -64,49 +63,44 @@
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
 
-    // ===== 한글 폰트 임베드 =====
+    // ===== 한글 폰트 (doc마다 등록해야 함!) =====
     const KOREAN_FONT_FILE = "./NotoSansKR-VariableFont_wght.ttf";
-    const KOREAN_FONT_VFS_NAME = "NotoSansKR-VariableFont_wght.ttf";
+    const KOREAN_FONT_VFS_NAME = "NotoSansKR.ttf";
     const KOREAN_FONT_FAMILY = "NotoSansKR";
-    let KOREAN_FONT_READY = false;
 
-    function arrayBufferToBase64(buffer) {
-      const bytes = new Uint8Array(buffer);
+    let KOREAN_FONT_B64 = null; // base64는 캐싱
+    async function fetchFontB64Once() {
+      if (KOREAN_FONT_B64) return KOREAN_FONT_B64;
+
+      const res = await fetch(KOREAN_FONT_FILE);
+      if (!res.ok) throw new Error("한글 폰트 파일을 불러오지 못했습니다: " + KOREAN_FONT_FILE);
+
+      const buf = await res.arrayBuffer();
+
+      // 안전한 base64 변환(큰 파일 대응)
+      const bytes = new Uint8Array(buf);
       let binary = "";
-      const chunkSize = 0x8000; // 32KB
+      const chunkSize = 0x8000;
       for (let i = 0; i < bytes.length; i += chunkSize) {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
       }
-      return btoa(binary);
+      KOREAN_FONT_B64 = btoa(binary);
+      return KOREAN_FONT_B64;
     }
 
     async function ensureKoreanFont(doc) {
-      if (KOREAN_FONT_READY) return;
-    
-      const res = await fetch(KOREAN_FONT_FILE);
-      if (!res.ok) {
-        throw new Error("한글 폰트 파일을 불러오지 못했습니다: " + KOREAN_FONT_FILE);
-      }
-    
-      const buf = await res.arrayBuffer();
-    
-      // ArrayBuffer → base64
-      const bytes = new Uint8Array(buf);
-      let bin = "";
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      const b64 = btoa(bin);
-    
-      // normal
-      doc.addFileToVFS("NotoSansKR-Regular.ttf", b64);
-      doc.addFont("NotoSansKR-Regular.ttf", "NotoSansKR", "normal");
-    
-      // bold (같은 파일이지만 weight만 다르게 등록)
-      doc.addFileToVFS("NotoSansKR-Bold.ttf", b64);
-      doc.addFont("NotoSansKR-Bold.ttf", "NotoSansKR", "bold");
-    
-      KOREAN_FONT_READY = true;
-    }
+      const b64 = await fetchFontB64Once();
 
+      // 중요: doc마다 폰트 등록(답안지 깨짐 방지)
+      try {
+        doc.addFileToVFS(KOREAN_FONT_VFS_NAME, b64);
+      } catch (_) {}
+      try {
+        doc.addFont(KOREAN_FONT_VFS_NAME, KOREAN_FONT_FAMILY, "normal");
+      } catch (_) {}
+
+      doc.setFont(KOREAN_FONT_FAMILY, "normal");
+    }
 
     // ===== 상태/유틸 =====
     let pdfBlobQ = null;
@@ -131,7 +125,7 @@
       return !!window.showOpenFilePicker;
     }
 
-    // ===== IndexedDB: 파일 핸들 저장/로드 (FS Access 지원일 때만 의미 있음) =====
+    // ===== IndexedDB (FS Access용 “이전 파일”) =====
     const IDB_DB = "voca_pdf_app";
     const IDB_STORE = "kv";
     const KEY_HANDLE = "last_excel_handle";
@@ -180,7 +174,6 @@
       $("downloadA").disabled = true;
 
       if (supportsFSAccess()) {
-        // 크롬/엣지(데스크톱 등): 파일 핸들 선택 + 기억
         const [handle] = await window.showOpenFilePicker({
           multiple: false,
           types: [{
@@ -201,14 +194,13 @@
         $("fileLabel").textContent = `파일: ${handle.name}`;
         log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
       } else {
-        // iOS/사파리 등: input[type=file]로 폴백
         $("fileInput").value = "";
         $("fileInput").click();
       }
     }
 
     async function usePreviousFile() {
-      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’를 지원하지 않습니다. iPhone/iPad에서는 파일을 다시 선택해 주세요.");
+      assert(supportsFSAccess(), "이 브라우저는 ‘이전 파일 불러오기’를 지원하지 않습니다. (iPhone/iPad는 파일을 다시 선택해야 할 수 있어요)");
       const handle = await loadLastHandle();
       assert(handle, "저장된 이전 파일이 없습니다. 먼저 ‘엑셀 파일 불러오기’로 파일을 선택해 주세요.");
 
@@ -230,13 +222,13 @@
       currentFile = f;
       currentHandle = null;
 
-      $("prevBtn").disabled = true;   // iOS 폴백에서는 의미 없음
+      $("prevBtn").disabled = true;
       $("genBtn").disabled = false;
       $("fileLabel").textContent = `파일: ${f.name}`;
       log("파일 선택 완료. ‘PDF 생성’을 눌러주세요.", "good");
     });
 
-    // ===== 엑셀 읽기: handle 또는 file =====
+    // ===== 엑셀 읽기 =====
     async function readExcelFromSource() {
       let buf;
       let shownName = "";
@@ -327,155 +319,129 @@
       }));
     }
 
-    // ===== PDF 생성 (A4 세로, 페이지당 64문항) =====
+    // ===== PDF 생성 (A4 세로, 페이지당 64문항, 세로만 중앙정렬) =====
     async function buildPdf(titleText, questions, includeMeaning) {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-    
+
+      // ★ doc마다 폰트 등록(답안지 깨짐 방지)
       await ensureKoreanFont(doc);
-      doc.setFont(KOREAN_FONT_FAMILY, "normal");
-    
+
       const pageW = 210, pageH = 297;
-    
-      // 표 전체 폭(조금 더 짧게)
-      const tableW = 186;
-      const tableX = (pageW - tableW) / 2;
-    
-      // 열 너비(너비 짧게 + 중앙여백은 아주 얇게)
-      const wNo = 8, wWord = 36, wMean = 44, wGap = 2;
+
+      // 가로는 "이전 위치" 느낌으로: 좌측 여백 10, 폭 190
+      const tableX = 10;
+      const tableW = 190;
+
+      // 열 너비(기존 느낌 유지)
+      const wNo = 8, wWord = 34, wMean = 45, wGap = 6;
       const colW = [wNo, wWord, wMean, wGap, wNo, wWord, wMean];
-    
-      // 높이(촘촘하게)
+
       const hInfo = 8, hHead = 8, hRow = 6;
-    
-      // 선 굵기(요구: 좀 굵게)
-      const lineOuter = 0.9;
-      const lineInner = 0.6;
-    
-      // 페이지당 최대 문항
+
+      // 선 굵기 "원래 얇게"
+      const outerLW = 0.35;
+      const innerLW = 0.25;
+
       const maxPerPage = 64;
       const pageCount = Math.max(1, Math.ceil(questions.length / maxPerPage));
-    
+
       for (let p = 0; p < pageCount; p++) {
         if (p > 0) doc.addPage();
-    
-        const chunk = questions.slice(p * maxPerPage, (p + 1) * maxPerPage);
+
+        // chunk
+        const chunk = questions.slice(p * maxPerPage, (p+1) * maxPerPage);
         const rowsPerCol = Math.ceil(chunk.length / 2);
         const left = chunk.slice(0, rowsPerCol);
         const right = chunk.slice(rowsPerCol);
-    
-        // ---- Day를 작은 글씨로 상단 좌측 배치(박스 없음) ----
+
+        // Day는 작은 글씨로 "상단 왼쪽" (박스 없음)
         doc.setFont(KOREAN_FONT_FAMILY, "normal");
         doc.setFontSize(10);
-        doc.text(titleText, tableX, 10); // 상단 좌측(표 시작 x 기준)
-    
-        // ---- 표 전체 높이 계산 후 "세로 중앙 정렬" ----
-        // 표 구성: (이름/점수 1줄) + (헤더 1줄) + (본문 rowsPerCol 줄)
+        doc.text(titleText, tableX, 10);
+
+        // 표 높이 계산 -> 세로 중앙정렬
         const tableH = hInfo + hHead + (rowsPerCol * hRow);
-    
-        // day 텍스트는 위쪽에 남겨두고, 표는 그 아래에서 중앙 배치
-        // 1) 표를 페이지 중앙에 놓되, 위쪽 여백 확보를 위해 minY를 둠
-        const topSafe = 16; // day 텍스트 아래 여백
+
+        const topSafe = 16; // Day 아래 여백
         let tableY = (pageH - tableH) / 2;
         if (tableY < topSafe) tableY = topSafe;
-    
+
         let y = tableY;
-    
-        // 공통 선 색
+
         doc.setDrawColor(0);
-    
-        // -------------------------
-        // 이름/점수 행
-        // -------------------------
-        const leftBoxW = colW[0] + colW[1] + colW[2];
+
+        // 이름/점수
+        const leftBoxW  = colW[0] + colW[1] + colW[2];
         const rightBoxW = colW[4] + colW[5] + colW[6];
-    
-        // 외곽선 굵기
-        doc.setLineWidth(lineOuter);
-    
-        // 왼쪽(이름)
+
+        doc.setLineWidth(outerLW);
         doc.rect(tableX, y, leftBoxW, hInfo);
-        doc.setFontSize(10);
-        doc.text("이름", tableX + leftBoxW / 2, y + 5.5, { align: "center" });
-    
-        // 가운데 갭
         doc.rect(tableX + leftBoxW, y, colW[3], hInfo);
-    
-        // 오른쪽(점수)
         doc.rect(tableX + leftBoxW + colW[3], y, rightBoxW, hInfo);
-        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW / 2, y + 5.5, { align: "center" });
-    
+
+        doc.setFontSize(10);
+        doc.text("이름", tableX + leftBoxW/2, y + 5.5, { align: "center" });
+        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW/2, y + 5.5, { align: "center" });
+
         y += hInfo;
-    
-        // -------------------------
-        // 헤더 행
-        // -------------------------
-        const headerLabels = ["번호", "단어", "의미", "", "번호", "단어", "의미"];
-    
-        doc.setLineWidth(lineInner);
+
+        // 헤더
+        const headerLabels = ["번호","단어","의미","","번호","단어","의미"];
+        doc.setLineWidth(innerLW);
+
         let x = tableX;
-        for (let c = 0; c < 7; c++) {
+        for (let c=0;c<7;c++){
           doc.rect(x, y, colW[c], hHead);
-          if (headerLabels[c]) {
-            doc.text(headerLabels[c], x + colW[c] / 2, y + 5.5, { align: "center" });
-          }
+          if (headerLabels[c]) doc.text(headerLabels[c], x + colW[c]/2, y + 5.5, { align: "center" });
           x += colW[c];
         }
         y += hHead;
-    
-        // -------------------------
+
         // 본문
-        // -------------------------
         doc.setFontSize(9);
-    
-        for (let i = 0; i < rowsPerCol; i++) {
+
+        for (let i=0;i<rowsPerCol;i++){
           const L = left[i];
           const R = right[i];
-    
-          // 각 행을 시작할 때 외곽/내부 느낌 살리기:
-          // 내부는 lineInner로
-          doc.setLineWidth(lineInner);
-    
-          // Left cells
+
+          // Left
           let x0 = tableX;
           doc.rect(x0, y, colW[0], hRow);
-          doc.rect(x0 + colW[0], y, colW[1], hRow);
-          doc.rect(x0 + colW[0] + colW[1], y, colW[2], hRow);
-    
+          doc.rect(x0+colW[0], y, colW[1], hRow);
+          doc.rect(x0+colW[0]+colW[1], y, colW[2], hRow);
+
           if (L) {
-            doc.text(String(L.no), x0 + colW[0] / 2, y + 4.3, { align: "center" });
+            doc.text(String(L.no), x0 + colW[0]/2, y + 4.3, { align:"center" });
             doc.text(L.word, x0 + colW[0] + 2, y + 4.3);
             if (includeMeaning) doc.text(L.mean || "", x0 + colW[0] + colW[1] + 2, y + 4.3);
           }
-    
-          // Gap column (얇은 세로 분리)
-          doc.rect(x0 + colW[0] + colW[1] + colW[2], y, colW[3], hRow);
-    
-          // Right cells
-          const xr = x0 + colW[0] + colW[1] + colW[2] + colW[3];
+
+          // Gap
+          doc.rect(x0+colW[0]+colW[1]+colW[2], y, colW[3], hRow);
+
+          // Right
+          const xr = x0+colW[0]+colW[1]+colW[2]+colW[3];
           doc.rect(xr, y, colW[4], hRow);
-          doc.rect(xr + colW[4], y, colW[5], hRow);
-          doc.rect(xr + colW[4] + colW[5], y, colW[6], hRow);
-    
+          doc.rect(xr+colW[4], y, colW[5], hRow);
+          doc.rect(xr+colW[4]+colW[5], y, colW[6], hRow);
+
           if (R) {
-            doc.text(String(R.no), xr + colW[4] / 2, y + 4.3, { align: "center" });
+            doc.text(String(R.no), xr + colW[4]/2, y + 4.3, { align:"center" });
             doc.text(R.word, xr + colW[4] + 2, y + 4.3);
             if (includeMeaning) doc.text(R.mean || "", xr + colW[4] + colW[5] + 2, y + 4.3);
           }
-    
+
           y += hRow;
         }
-    
-        // -------------------------
-        // 전체 외곽 테두리(더 굵게 한 번 감싸기)
-        // -------------------------
-        doc.setLineWidth(lineOuter);
+
+        // 바깥 테두리 한 번 더 (얇게)
+        doc.setLineWidth(outerLW);
         doc.rect(tableX, tableY, tableW, tableH);
       }
-    
+
       return doc.output("blob");
     }
-
 
     function downloadBlob(blob, filename) {
       const url = URL.createObjectURL(blob);
@@ -567,14 +533,9 @@
     $("downloadQ").addEventListener("click", () => { if (pdfBlobQ) downloadBlob(pdfBlobQ, "문제지.pdf"); });
     $("downloadA").addEventListener("click", () => { if (pdfBlobA) downloadBlob(pdfBlobA, "답안지.pdf"); });
 
-    // 초기 상태
     (async () => {
       await ensurePrevButtonState();
-      if (!supportsFSAccess()) {
-        log("대기 중… (iPhone/iPad에서는 파일을 매번 다시 선택해야 할 수 있어요)");
-      } else {
-        log("대기 중…");
-      }
+      log("대기 중…");
     })();
   </script>
 </body>
