@@ -417,13 +417,13 @@
       const tableX = 10;
     
       // 열 너비
-      const wNo = 8, wWord = 34, wMean = 45, wGap = 6;
-      const colW = [wNo, wWord, wMean, wGap, wNo, wWord, wMean];
+      const wNo = 8, wWord = 34, wMean = 48;
+      const colW = [wNo, wWord, wMean, wNo, wWord, wMean];
     
       // ✅ 실제 열 너비 합계만큼만 테이블 폭을 잡아야 오른쪽 빈 박스가 안 생김
       const tableW = colW.reduce((a, b) => a + b, 0); // = 180
     
-      const hInfo = 8, hHead = 8, hRow = 6;
+      const hInfo = 0, hHead = 8, hRow = 6;
     
       // 선 굵기(원래 얇게)
       const outerLW = 0.35;
@@ -454,27 +454,12 @@
     
         doc.setDrawColor(0);
     
-        // 이름/점수
-        const leftBoxW = colW[0] + colW[1] + colW[2];
-        const rightBoxW = colW[4] + colW[5] + colW[6];
-    
-        doc.setLineWidth(outerLW);
-        doc.rect(tableX, y, leftBoxW, hInfo);
-        doc.rect(tableX + leftBoxW, y, colW[3], hInfo);
-        doc.rect(tableX + leftBoxW + colW[3], y, rightBoxW, hInfo);
-    
-        doc.setFontSize(10);
-        doc.text("이름", tableX + leftBoxW / 2, y + 5.5, { align: "center" });
-        doc.text("점수", tableX + leftBoxW + colW[3] + rightBoxW / 2, y + 5.5, { align: "center" });
-    
-        y += hInfo;
-    
         // 헤더
-        const headerLabels = ["번호", "단어", "의미", "", "번호", "단어", "의미"];
+        const headerLabels = ["번호", "단어", "의미", "번호", "단어", "의미"];
         doc.setLineWidth(innerLW);
     
         let x = tableX;
-        for (let c = 0; c < 7; c++) {
+        for (let c = 0; c < 6; c++) {
           doc.rect(x, y, colW[c], hHead);
           if (headerLabels[c]) doc.text(headerLabels[c], x + colW[c] / 2, y + 5.5, { align: "center" });
           x += colW[c];
@@ -500,19 +485,16 @@
             if (includeMeaning) doc.text(L.mean || "", x0 + colW[0] + colW[1] + 2, y + 4.3);
           }
     
-          // Gap
-          doc.rect(x0 + colW[0] + colW[1] + colW[2], y, colW[3], hRow);
-    
           // Right
-          const xr = x0 + colW[0] + colW[1] + colW[2] + colW[3];
-          doc.rect(xr, y, colW[4], hRow);
-          doc.rect(xr + colW[4], y, colW[5], hRow);
-          doc.rect(xr + colW[4] + colW[5], y, colW[6], hRow);
+          const xr = x0 + colW[0] + colW[1] + colW[2];
+          doc.rect(xr, y, colW[3], hRow);
+          doc.rect(xr + colW[3], y, colW[4], hRow);
+          doc.rect(xr + colW[3] + colW[4], y, colW[5], hRow);
     
           if (R) {
-            doc.text(String(R.no), xr + colW[4] / 2, y + 4.3, { align: "center" });
-            doc.text(R.word, xr + colW[4] + 2, y + 4.3);
-            if (includeMeaning) doc.text(R.mean || "", xr + colW[4] + colW[5] + 2, y + 4.3);
+            doc.text(String(R.no), xr + colW[3] / 2, y + 4.3, { align: "center" });
+            doc.text(R.word, xr + colW[3] + 2, y + 4.3);
+            if (includeMeaning) doc.text(R.mean || "", xr + colW[3] + colW[4] + 2, y + 4.3);
           }
     
           y += hRow;
