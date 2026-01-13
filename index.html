@@ -63,6 +63,30 @@
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
 
+    // ===== 입력값 기억(localStorage) =====
+    const LS_KEY = "voca_pdf_last_inputs_v1";
+    
+    function saveInputs() {
+      const payload = {
+        dayStart: $("dayStart").value,
+        dayEnd: $("dayEnd").value,
+        count: $("count").value,
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    }
+
+    function restoreInputs() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return;
+        const v = JSON.parse(raw);
+        if (v.dayStart != null) $("dayStart").value = v.dayStart;
+        if (v.dayEnd != null) $("dayEnd").value = v.dayEnd;
+        if (v.count != null) $("count").value = v.count;
+      } catch (_) {}
+    }
+
+
     // ===== 한글 폰트 (doc마다 등록해야 함!) =====
     const KOREAN_FONT_FILE = "./NotoSansKR-VariableFont_wght.ttf";
     const KOREAN_FONT_VFS_NAME = "NotoSansKR.ttf";
@@ -598,7 +622,15 @@
     $("downloadQ").addEventListener("click", () => { if (pdfBlobQ) downloadBlob(pdfBlobQ, "문제지.pdf"); });
     $("downloadA").addEventListener("click", () => { if (pdfBlobA) downloadBlob(pdfBlobA, "답안지.pdf"); });
 
+    // ===== 입력값 변경 시 자동 저장 =====
+    ["dayStart", "dayEnd", "count"].forEach(id => {
+      $(id).addEventListener("input", saveInputs);
+      $(id).addEventListener("change", saveInputs);
+    });
+
+
     (async () => {
+      restoreInputs();
       await ensurePrevButtonState();
       log("대기 중…");
     })();
